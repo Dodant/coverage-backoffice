@@ -87,7 +87,7 @@ export default function CoverDiscovery() {
     try {
       const response = await fetch('/cover-agent/discover?stream=1', {
         method: 'POST', signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session()?.token ?? ''}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
       })
       if (!response.ok) {
@@ -213,10 +213,12 @@ export default function CoverDiscovery() {
   const candidates = (versionMap.get(selectedVersion) ?? []).sort((a, b) =>
     ({ clean: 0, unknown: 1, banded: 2 })[ribbons[a.id] ?? 'unknown'] - ({ clean: 0, unknown: 1, banded: 2 })[ribbons[b.id] ?? 'unknown'])
   const chosen = result?.candidates.find(candidate => candidate.id === selectedCandidate)
+  const canManage = Boolean(session()?.token)
 
   return <>
     <h1>커버 탐색·적용</h1>
     <p className="muted">원서를 기준으로 번역서와 각 판의 표지를 비교합니다. 띠지 여부는 큰 이미지를 확인한 뒤 표시하세요.</p>
+    {!canManage && <p className="note">개발 미리보기에서는 커버 탐색과 비교를 사용할 수 있습니다. 표지 등록과 대표 표지 변경은 백엔드 관리자 인증이 필요합니다.</p>}
     <form className="panel row" onSubmit={searchBooks}>
       <input aria-label="원서 검색어" placeholder="원서 제목, 저자 또는 ISBN" value={query} onChange={e => setQuery(e.target.value)} />
       <button disabled={searchingBooks || !query.trim()}>{searchingBooks ? '찾는 중…' : '원서 찾기'}</button>
@@ -228,7 +230,7 @@ export default function CoverDiscovery() {
     {original && <div className="work-layout">
       <section className="panel work-original">
         <h2>원서 · 메인</h2>
-        <BookPanel book={original} active={targetId === original.id} applying={applying} onPick={pickBook} onRepresentative={setRepresentative} />
+        <BookPanel book={original} active={targetId === original.id} applying={applying} canManage={canManage} onPick={pickBook} onRepresentative={setRepresentative} />
       </section>
       <section className="work-translations">
         <h2>번역서 {translations.length}종</h2>
@@ -242,7 +244,7 @@ export default function CoverDiscovery() {
                   {books.map(book => <option key={book.id} value={book.id}>{[book.edition, book.publisher?.name, book.year, book.isbn].filter(Boolean).join(' · ') || book.title}</option>)}
                 </select>
               </label>}
-              <BookPanel book={current} active={targetId === current.id} applying={applying} onPick={pickBook} onRepresentative={setRepresentative} />
+              <BookPanel book={current} active={targetId === current.id} applying={applying} canManage={canManage} onPick={pickBook} onRepresentative={setRepresentative} />
             </section>
           })}
           {!translations.length && <p className="muted">등록된 번역서가 없습니다.</p>}
@@ -259,7 +261,7 @@ export default function CoverDiscovery() {
       </form>
     </section>}
     {progress && <section className="panel discovery-progress" aria-label="커버 탐색 진행도" aria-live="polite">
-      <div className="row" style={{ justifyContent: 'space-between' }}><strong>{progress.phase === 'connecting' ? '관리자 확인 중…' : progress.phase === 'searching' ? '판과 커버를 찾는 중…' : progress.phase === 'done' ? '탐색 완료' : '탐색 중단'}</strong>
+      <div className="row" style={{ justifyContent: 'space-between' }}><strong>{progress.phase === 'connecting' ? '탐색 서비스 연결 중…' : progress.phase === 'searching' ? '판과 커버를 찾는 중…' : progress.phase === 'done' ? '탐색 완료' : '탐색 중단'}</strong>
         <span className="muted small">{sources.filter(name => progress.sources[name].status !== 'waiting').length} / 2곳 완료</span></div>
       <progress max={2} value={sources.filter(name => progress.sources[name].status !== 'waiting').length} />
       <div className="discovery-sources">{sources.map(name => { const source = progress.sources[name]; return <span key={name} className="small">{name}: {source.status === 'done' ? `${source.count}개 후보` : source.status === 'failed' ? '조회 실패' : progress.phase === 'connecting' ? '대기 중' : '조회 중'}</span> })}</div>
@@ -299,15 +301,15 @@ export default function CoverDiscovery() {
           {dimensions[chosen.id] && (() => { const [width, height] = dimensions[chosen.id].split('×').map(Number); return width < 800 || height < 1200 ? <p className="error small">기본 업로드 기준(800×1200)보다 작아 적용이 거절될 수 있습니다.</p> : null })()}
           {ribbons[chosen.id] === 'banded' && candidates.some(candidate => ribbons[candidate.id] === 'clean') && <p className="note">같은 판에 띠지 없는 후보가 있습니다.</p>}
           {!ribbons[chosen.id] && <p className="muted small">띠지 여부를 확인하고 표시하면 적용할 수 있습니다.</p>}
-          <button className="primary" disabled={applying || loading || !ribbons[chosen.id] || ribbons[chosen.id] === 'unknown'} onClick={apply}>{applying ? '적용 중…' : '이 커버를 변형으로 추가하고 대표로 지정'}</button>
+          <button className="primary" disabled={!canManage || applying || loading || !ribbons[chosen.id] || ribbons[chosen.id] === 'unknown'} onClick={apply}>{applying ? '적용 중…' : '이 커버를 변형으로 추가하고 대표로 지정'}</button>
         </div>
       </div>}
     </section>}
   </>
 }
 
-function BookPanel({ book, active, applying, onPick, onRepresentative }: {
-  book: Book; active: boolean; applying: boolean; onPick: (book: Book) => void; onRepresentative: (book: Book, cover: Cover) => void
+function BookPanel({ book, active, applying, canManage, onPick, onRepresentative }: {
+  book: Book; active: boolean; applying: boolean; canManage: boolean; onPick: (book: Book) => void; onRepresentative: (book: Book, cover: Cover) => void
 }) {
   return <div className="work-book">
     {coverImage(book.frontCover) ? <img className="work-book-cover" src={coverImage(book.frontCover)} alt={`${book.title} 대표 표지`} /> : <div className="nocover">표지 없음</div>}
@@ -318,7 +320,7 @@ function BookPanel({ book, active, applying, onPick, onRepresentative }: {
       <div className="row">{book.covers.filter(cover => coverImage(cover)).map(cover => <div className="work-variant" key={cover.id}>
         <img src={coverImage(cover)} alt={cover.label || '표지 버전'} />
         <span className="small">{cover.label || (cover.printingFrom ? `${cover.printingFrom}쇄부터` : '표지 버전')}</span>
-        {book.frontCover?.id !== cover.id && <button disabled={applying} onClick={() => onRepresentative(book, cover)}>대표로</button>}
+        {book.frontCover?.id !== cover.id && <button disabled={!canManage || applying} onClick={() => onRepresentative(book, cover)}>대표로</button>}
       </div>)}</div>
     </div>}
   </div>

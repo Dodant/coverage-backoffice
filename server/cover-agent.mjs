@@ -261,12 +261,14 @@ export function startServer() {
     const url = new URL(request.url, 'http://localhost')
     if (request.method !== 'POST' || !['/discover', '/apply'].includes(url.pathname)) return send(response, 404, { message: 'Not found' })
     const authorization = request.headers.authorization ?? ''
-    if (!/^Bearer \S+$/.test(authorization)) return send(response, 401, { message: '로그인이 필요합니다.' })
     try {
-      const check = await fetch(`${backend}/api/users/me`, { headers: { Authorization: authorization }, signal: AbortSignal.timeout(5000) })
-      if (!check.ok) return send(response, 401, { message: '관리자 인증에 실패했습니다.' })
-      const user = await check.json()
-      if (user.role !== 'ADMIN') return send(response, 403, { message: '관리자만 사용할 수 있습니다.' })
+      if (url.pathname === '/apply') {
+        if (!/^Bearer \S+$/.test(authorization)) return send(response, 401, { message: '표지 등록에는 관리자 인증이 필요합니다.' })
+        const check = await fetch(`${backend}/api/users/me`, { headers: { Authorization: authorization }, signal: AbortSignal.timeout(5000) })
+        if (!check.ok) return send(response, 401, { message: '관리자 인증에 실패했습니다.' })
+        const user = await check.json()
+        if (user.role !== 'ADMIN') return send(response, 403, { message: '관리자만 사용할 수 있습니다.' })
+      }
       const input = await readBody(request)
       if (url.pathname === '/apply') return send(response, 200, await applyCover(input, authorization))
       if (url.searchParams.get('stream') === '1') {
