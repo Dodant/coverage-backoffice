@@ -59,21 +59,23 @@ th { color: var(--muted); font-weight: 600; }
 }
 
 /* 표지 묶기 보드 */
-.board { display: flex; flex-wrap: wrap; gap: 20px 24px; align-items: flex-start; background: var(--panel);
+.selection-bar { background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.board { display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; background: var(--panel);
          border: 1px dashed var(--line); border-radius: 8px; padding: 16px; margin-bottom: 12px; min-height: 160px; }
-.pile { position: relative; padding: 4px; border-radius: 8px; border: 2px solid transparent; }
-.pile.group { background: var(--bg); border-color: var(--line); }
-.pile.over { border-color: var(--accent); }
-.stack { position: relative; height: 128px; width: calc(80px + (var(--n) - 1) * 26px); transition: width .15s; }
-.pile:hover .stack { width: calc(80px + (var(--n) - 1) * 86px); }
-.pc { position: absolute; top: 0; width: 80px; height: 120px; object-fit: cover; border-radius: 3px; transition: left .15s, top .15s;
-      border: 1px solid var(--line); background: var(--bg); box-shadow: 0 1px 4px rgba(0,0,0,.18);
-      cursor: grab; touch-action: none; user-select: none; -webkit-user-drag: none; }
-.pile:hover .pc { left: calc(var(--j) * 86px) !important; top: 0 !important; }
-.pc.dragging { opacity: .3; }
+.cover-group { border: 2px solid var(--line); border-radius: 8px; background: var(--bg); padding: 10px; min-width: 160px; max-width: 100%; }
+.cover-group.over { border-color: var(--accent); }
+.cover-group-head { margin-bottom: 10px; }
+.cover-group-head button { margin-left: auto; }
+.cover-group-items { display: flex; flex-wrap: wrap; gap: 8px; }
+.cover-item { width: 110px; display: flex; flex-direction: column; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+.cover-item.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.cover-item img { display: block; width: 92px; height: 138px; object-fit: cover; border-radius: 3px; border: 1px solid var(--line);
+                  background: var(--bg); cursor: grab; touch-action: none; user-select: none; -webkit-user-drag: none; }
+.cover-item img.dragging { opacity: .3; }
+.cover-item strong { font-size: 12px; line-height: 1.3; overflow-wrap: anywhere; }
+.cover-item button { margin-top: auto; }
 .ghost { position: fixed; width: 80px; height: 120px; object-fit: cover; pointer-events: none; z-index: 10;
          border-radius: 3px; box-shadow: 0 6px 18px rgba(0,0,0,.35); transform: translate(-50%, -50%) rotate(-3deg); }
-.pile .cap { font-size: 12px; color: var(--muted); margin-top: 4px; max-width: 200px; }
 
 /* 등록 기록 카드 */
 .card { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 16px; background: var(--panel);
