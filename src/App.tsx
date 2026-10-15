@@ -4,11 +4,13 @@ import { login, logout, session } from './api'
 import Dashboard from './pages/Dashboard'
 import Entities from './pages/Entities'
 import Covers from './pages/Covers'
+import CoverDiscovery from './pages/CoverDiscovery'
 import Runs from './pages/Runs'
 
 const MENU = [
   ['/dashboard', '대시보드'],
   ['/covers', '표지 묶기'],
+  ['/cover-discovery', '커버 탐색'],
   ['/runs', '등록 기록'],
   ['/entities', '엔티티 정리'],
 ] as const
@@ -42,6 +44,7 @@ function Shell() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/covers" element={<Covers />} />
           <Route path="/covers/:originalId" element={<Covers />} />
+          <Route path="/cover-discovery" element={<CoverDiscovery />} />
           <Route path="/runs" element={<Runs />} />
           <Route path="/runs/:file" element={<Runs />} />
           <Route path="/entities" element={<Entities />} />

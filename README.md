@@ -4,6 +4,7 @@ COVERAGE 관리자 백오피스 (Vite + React + TS). ADMIN 계정으로 로그�
 
 1. 백엔드를 띄운다: `cd ../coverage-backend && docker compose up -d && ./gradlew bootRun` (ADMIN 승격은 백엔드 README)
 2. 에이전트 등록 기록을 보려면: `cd ../coverage-backend && python3 .claude/skills/register-book/api.py serve`
-3. `npm install && npm run dev` → http://localhost:5173 (개발 서버가 `/api`는 백엔드 8080, `/agent`는 실행 기록 8765로 프록시. 바꾸려면 `COVERAGE_BACKEND`, `COVERAGE_AGENT_RUNS`)
-4. 화면: 대시보드·감사 로그, 표지 묶기(언어가 달라도 비슷한 표지, 백엔드 `similar_group_id`), 등록 기록(에이전트 runs/), 엔티티 정리(병합·별칭·재색인)
-5. 확인: `npm run build && npm run lint`. 배포 시에는 같은 출처에서 `/api`를 백엔드로 넘겨야 한다(백엔드에 CORS 설정 없음)
+3. 커버 탐색을 쓰려면 별도 터미널에서 `npm run cover-agent`를 실행한다. 제목·저자·ISBN으로 Open Library와 Google Books의 커버 후보를 찾으며, 관리자 토큰은 백엔드 `/api/users/me`로 확인한다. Google Books 키가 있으면 `GOOGLE_BOOKS_API_KEY` 환경변수로 넣는다. 기본 포트는 8766이고 `COVERAGE_COVER_AGENT_PORT`로 변경할 수 있다.
+4. `npm install && npm run dev` → http://localhost:5173 (개발 서버가 `/api`는 백엔드 8080, `/agent`는 실행 기록 8765, `/cover-agent`는 커버 탐색 8766으로 프록시. 바꾸려면 `COVERAGE_BACKEND`, `COVERAGE_AGENT_RUNS`, `COVERAGE_COVER_AGENT`)
+5. 화면: 대시보드·감사 로그, 표지 묶기(언어가 달라도 비슷한 표지, 백엔드 `similar_group_id`), 커버 탐색(출처별 진행도·검토용 후보·출처), 등록 기록(에이전트 runs/), 엔티티 정리(병합·별칭·재색인)
+6. 확인: `npm run build && npm run lint && npm run test:cover-agent`. 배포 시에는 같은 출처에서 `/api`와 `/cover-agent`를 각 서비스로 넘겨야 한다(백엔드에 CORS 설정 없음). 탐색 서비스는 로컬호스트에 바인딩한다.
