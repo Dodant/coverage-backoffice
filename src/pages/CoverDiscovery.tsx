@@ -12,6 +12,8 @@ type Book = {
   frontCover: Cover | null; covers: Cover[]
 }
 type SearchItem = { id: string; type: string; title: string; author: string; year: number | null }
+type OnlineBook = { id: string; source: string; title: string; authors: string[]; isbn: string; year: number | null; language: string; imageUrl: string; sourceUrl: string }
+type BookSearchResult = { books: OnlineBook[]; errors: string[] }
 type Candidate = {
   id: string; source: string; title: string; authors: string[]; isbn: string; imageUrl: string; sourceUrl: string
   match: 'isbn' | 'title'; publisher: string; year: number | null; edition: string
@@ -37,8 +39,11 @@ const versionLabel = (candidate: Candidate) => [candidate.publisher, candidate.y
 export default function CoverDiscovery() {
   const [query, setQuery] = useState('')
   const [searchingBooks, setSearchingBooks] = useState(false)
+  const [onlineBooks, setOnlineBooks] = useState<OnlineBook[] | null>(null)
+  const [selectedOnline, setSelectedOnline] = useState<OnlineBook | null>(null)
   const [bookResults, setBookResults] = useState<SearchItem[] | null>(null)
   const [bookSearchNotice, setBookSearchNotice] = useState('')
+  const [bookSearchError, setBookSearchError] = useState('')
   const [original, setOriginal] = useState<Book | null>(null)
   const [translations, setTranslations] = useState<Book[]>([])
   const [targetId, setTargetId] = useState('')
@@ -56,22 +61,42 @@ export default function CoverDiscovery() {
   const [message, setMessage] = useState('')
   const [copied, setCopied] = useState('')
   const requestId = useRef(0)
+  const bookSearchId = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
 
   const searchBooks = async (event: FormEvent) => {
     event.preventDefault()
     if (!query.trim()) return
+    const id = ++bookSearchId.current
     setSearchingBooks(true)
+    setOnlineBooks(null)
     setBookResults(null)
     setBookSearchNotice('')
-    const input = { title: query.trim(), author: '', isbn: '' }
-    setSearchInput(input)
-    void discover(input)
-    try {
-      const data = await api<{ items: SearchItem[] }>(`/search?${new URLSearchParams({ query: query.trim(), size: '50' })}`, { signal: AbortSignal.timeout(5000) })
-      setBookResults(data.items.filter(item => item.type === 'ORIGINAL'))
-    } catch { setBookSearchNotice('등록 도서 검색에 연결하지 못했습니다. 온라인 커버 후보는 계속 탐색합니다.') }
-    finally { setSearchingBooks(false) }
+    setBookSearchError('')
+    setSelectedOnline(null)
+    setOriginal(null)
+    setTranslations([])
+    setTargetId('')
+    abortRef.current?.abort()
+    setResult(null)
+    setProgress(null)
+    const term = query.trim()
+    const online = fetch('/cover-agent/books/search', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: term }),
+      signal: AbortSignal.timeout(15000),
+    }).then(async response => {
+      const data = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(data?.message ?? '온라인 도서 검색에 연결할 수 없습니다.')
+      if (id === bookSearchId.current) {
+        setOnlineBooks((data as BookSearchResult).books)
+        setBookSearchNotice((data as BookSearchResult).errors.join(' · '))
+      }
+    }).catch(e => { if (id === bookSearchId.current) setBookSearchError(e instanceof Error ? e.message : String(e)) })
+    const registered = api<{ items: SearchItem[] }>(`/search?${new URLSearchParams({ query: term, size: '50' })}`, { signal: AbortSignal.timeout(5000) })
+      .then(data => { if (id === bookSearchId.current) setBookResults(data.items.filter(item => item.type === 'ORIGINAL')) })
+      .catch(() => { /* 등록 도서 검색 장애는 온라인 검색을 막지 않는다. */ })
+    await Promise.all([online, registered])
+    if (id === bookSearchId.current) setSearchingBooks(false)
   }
 
   const discover = async (input: typeof searchInput) => {
@@ -159,12 +184,28 @@ export default function CoverDiscovery() {
   }
 
   const pickOriginal = async (item: SearchItem) => {
-    setBookResults(null)
+    setSelectedOnline(null)
     setError('')
     try {
       const { main } = await loadWork(item.id.replace(/^original_/, ''))
-      pickBook(main)
+      abortRef.current?.abort()
+      setTargetId(main.id)
+      setSearchInput({ title: main.title, author: main.author?.name ?? '', isbn: main.isbn ?? '' })
+      setResult(null)
+      setProgress(null)
     } catch (e) { setError(String(e)) }
+  }
+
+  const pickOnline = (book: OnlineBook) => {
+    abortRef.current?.abort()
+    setSelectedOnline(book)
+    setOriginal(null)
+    setTranslations([])
+    setTargetId('')
+    setSearchInput({ title: book.title, author: book.authors[0] ?? '', isbn: book.isbn })
+    setResult(null)
+    setProgress(null)
+    setError('')
   }
 
   const setRepresentative = async (book: Book, cover: Cover) => {
@@ -222,17 +263,30 @@ export default function CoverDiscovery() {
 
   return <>
     <h1>커버 탐색·적용</h1>
-    <p className="muted">원서 제목으로 커버를 찾습니다. 등록된 도서를 선택하면 번역서와 각 판도 비교할 수 있습니다. 띠지 여부는 큰 이미지를 확인한 뒤 표시하세요.</p>
+    <p className="muted">책을 먼저 검색해 원서를 선택하세요. 선택한 책의 저자와 ISBN으로 커버 후보를 찾고, 등록된 책은 번역서도 비교할 수 있습니다.</p>
     {!canManage && <p className="note">개발 미리보기에서는 커버 탐색과 비교를 사용할 수 있습니다. 표지 등록과 대표 표지 변경은 백엔드 관리자 인증이 필요합니다.</p>}
-    <form className="panel row" onSubmit={searchBooks}>
-      <input aria-label="원서 검색어" placeholder="원서 제목, 저자 또는 ISBN" value={query} onChange={e => setQuery(e.target.value)} />
-      <button disabled={searchingBooks || !query.trim()}>{searchingBooks ? '등록 도서 확인 중…' : '커버 찾기'}</button>
-    </form>
+    <section className="panel">
+      <h2>1. 책 검색</h2>
+      <form className="row" onSubmit={searchBooks}>
+        <input aria-label="도서 검색어" placeholder="책 제목, 저자 또는 ISBN" value={query} onChange={e => setQuery(e.target.value)} />
+        <button disabled={searchingBooks || !query.trim()}>{searchingBooks ? '책 찾는 중…' : '책 찾기'}</button>
+      </form>
+    </section>
+    {bookSearchError && <p className="error" role="alert">{bookSearchError}</p>}
     {bookSearchNotice && <p className="note" role="status">{bookSearchNotice}</p>}
-    {bookResults && <div className="panel discovery-book-results">
-      {bookResults.map(item => <button key={item.id} onClick={() => pickOriginal(item)}>{item.title} <span className="muted small">{item.author} {item.year ?? ''}</span></button>)}
-      {!bookResults.length && <span className="muted">등록된 원서는 없습니다. 온라인 커버 후보는 아래에서 확인하세요.</span>}
-    </div>}
+    {bookResults && bookResults.length > 0 && <section className="panel">
+      <h2>등록된 원서</h2>
+      <div className="discovery-book-results">{bookResults.map(item => <button key={item.id} onClick={() => void pickOriginal(item)}>{item.title} <span className="muted small">{item.author} {item.year ?? ''}</span></button>)}</div>
+    </section>}
+    {onlineBooks && <section className="panel">
+      <h2>온라인 도서 검색 결과 <span className="muted small">{onlineBooks.length}권</span></h2>
+      <div className="book-search-results">{onlineBooks.map(book => <button key={book.id} className={'book-search-item' + (selectedOnline?.id === book.id ? ' selected' : '')} onClick={() => pickOnline(book)}>
+        {safeUrl(book.imageUrl) ? <img src={safeUrl(book.imageUrl)} alt="" loading="lazy" /> : <span className="nocover">표지 없음</span>}
+        <span><strong>{book.title}</strong><small>{[book.authors.join(', '), book.year, book.language, book.isbn && `ISBN ${book.isbn}`].filter(Boolean).join(' · ')}</small><small>{book.source}</small></span>
+      </button>)}</div>
+      {!onlineBooks.length && <p className="muted">검색된 책이 없습니다. 제목이나 ISBN을 바꿔 다시 찾아보세요.</p>}
+    </section>}
+    {selectedOnline && <section className="panel selected-book"><h2>선택한 원서</h2><strong>{selectedOnline.title}</strong><span className="muted small">{selectedOnline.authors.join(', ')} · {selectedOnline.source}</span><a href={safeUrl(selectedOnline.sourceUrl)} target="_blank" rel="noopener noreferrer">도서 정보 보기</a></section>}
     {original && <div className="work-layout">
       <section className="panel work-original">
         <h2>원서 · 메인</h2>
@@ -257,13 +311,13 @@ export default function CoverDiscovery() {
         </div>
       </section>
     </div>}
-    {target && <section className="panel">
-      <h2>{target.id === original?.id ? '원서' : langName(target.languageCode) + ' 번역서'} 커버 후보</h2>
+    {(target || selectedOnline) && <section className="panel">
+      <h2>2. {target && target.id !== original?.id ? langName(target.languageCode) + ' 번역서' : '원서'} 커버 후보 탐색</h2>
       <form className="discovery-form" onSubmit={e => { e.preventDefault(); void discover(searchInput) }}>
         <label>제목<input value={searchInput.title} onChange={e => setSearchInput(p => ({ ...p, title: e.target.value }))} /></label>
         <label>저자<input value={searchInput.author} onChange={e => setSearchInput(p => ({ ...p, author: e.target.value }))} /></label>
         <label>ISBN<input value={searchInput.isbn} onChange={e => setSearchInput(p => ({ ...p, isbn: e.target.value }))} /></label>
-        <button className="primary" disabled={loading || applying || (!searchInput.title.trim() && !searchInput.isbn.trim())}>{loading ? '탐색 중…' : '다시 탐색'}</button>
+        <button className="primary" disabled={loading || applying || (!searchInput.title.trim() && !searchInput.isbn.trim())}>{loading ? '탐색 중…' : result ? '다시 탐색' : '커버 후보 찾기'}</button>
       </form>
     </section>}
     {progress && <section className="panel discovery-progress" aria-label="커버 탐색 진행도" aria-live="polite">

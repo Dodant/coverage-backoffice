@@ -118,6 +118,49 @@ async function jsonFrom(url, fetcher) {
   return response.json()
 }
 
+export async function searchBooks(input = {}, fetcher = fetch) {
+  const query = clean(input.query)
+  if (!query) fail(400, '도서 제목, 저자 또는 ISBN을 입력해 주세요.')
+  const ol = new URL('https://openlibrary.org/search.json')
+  ol.searchParams.set('q', query)
+  ol.searchParams.set('fields', 'key,title,author_name,first_publish_year,cover_i')
+  ol.searchParams.set('limit', '20')
+  const google = new URL('https://www.googleapis.com/books/v1/volumes')
+  google.searchParams.set('q', /^\d{10,13}$/.test(isbnDigits(query)) ? `isbn:${isbnDigits(query)}` : query)
+  google.searchParams.set('maxResults', '20')
+  if (process.env.GOOGLE_BOOKS_API_KEY) google.searchParams.set('key', process.env.GOOGLE_BOOKS_API_KEY)
+
+  const searches = await Promise.allSettled([
+    jsonFrom(ol, fetcher).then(data => (data.docs ?? []).filter(doc => /^\/works\/OL\d+W$/.test(doc.key ?? '')).map(doc => ({
+      id: `ol-${doc.key.split('/').pop()}`, source: 'Open Library', title: doc.title ?? '',
+      authors: (doc.author_name ?? []).slice(0, 1), isbn: '',
+      // 작품 검색 결과의 ISBN/언어는 여러 번역판이 섞여 있으므로 판 정보로 쓰지 않는다.
+      year: doc.first_publish_year ?? null, language: '',
+      imageUrl: Number.isInteger(doc.cover_i) ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg?default=false` : '',
+      sourceUrl: `https://openlibrary.org${doc.key}`,
+    })).slice(0, 20)),
+    jsonFrom(google, fetcher).then(data => (data.items ?? []).map(item => {
+      const info = item.volumeInfo ?? {}
+      const identifiers = (info.industryIdentifiers ?? []).map(value => isbnDigits(value.identifier ?? '')).filter(validIsbn)
+      return {
+        id: `google-${item.id}`, source: 'Google Books', title: info.title ?? '', authors: (info.authors ?? []).slice(0, 3),
+        isbn: identifiers.find(value => /^\d{13}$/.test(value)) ?? identifiers[0] ?? '',
+        year: yearOf(info.publishedDate), language: info.language ?? '',
+        imageUrl: coverUrl(info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail),
+        sourceUrl: https(info.infoLink) || `https://books.google.com/books?id=${encodeURIComponent(item.id)}`,
+      }
+    }).filter(item => item.title).slice(0, 20)),
+  ])
+  const errors = []
+  const books = []
+  if (searches[0].status === 'fulfilled') books.push(...searches[0].value)
+  else errors.push('Open Library 도서 검색 실패')
+  if (searches[1].status === 'fulfilled') books.push(...searches[1].value)
+  else errors.push('Google Books 도서 검색 실패')
+  if (errors.length === 2) fail(502, '도서 검색 출처에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.')
+  return { books, errors }
+}
+
 function fromOpenLibrary(data, isbn) {
   if ('covers' in data) {
     return (data.covers ?? []).slice(0, 8).map(id => ({
@@ -259,7 +302,7 @@ function send(response, status, body) {
 export function startServer() {
   return createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost')
-    if (request.method !== 'POST' || !['/discover', '/apply'].includes(url.pathname)) return send(response, 404, { message: 'Not found' })
+    if (request.method !== 'POST' || !['/books/search', '/discover', '/apply'].includes(url.pathname)) return send(response, 404, { message: 'Not found' })
     const authorization = request.headers.authorization ?? ''
     try {
       if (url.pathname === '/apply') {
@@ -271,6 +314,7 @@ export function startServer() {
       }
       const input = await readBody(request)
       if (url.pathname === '/apply') return send(response, 200, await applyCover(input, authorization))
+      if (url.pathname === '/books/search') return send(response, 200, await searchBooks(input))
       if (url.searchParams.get('stream') === '1') {
         response.writeHead(200, {
           'Content-Type': 'application/x-ndjson; charset=utf-8',

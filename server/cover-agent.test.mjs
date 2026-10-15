@@ -1,6 +1,28 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { applyCover, discover } from './cover-agent.mjs'
+import { applyCover, discover, searchBooks } from './cover-agent.mjs'
+
+test('book search returns selectable bibliographic results before cover discovery', async () => {
+  const fetcher = async url => String(url).includes('openlibrary.org')
+    ? { ok: true, json: async () => ({ docs: [{ key: '/works/OL1W', title: 'Example', author_name: ['Author'], isbn: ['9788936433598'], cover_i: 123, first_publish_year: 2014 }] }) }
+    : { ok: true, json: async () => ({ items: [{ id: 'g1', volumeInfo: { title: 'Example edition', authors: ['Author'], language: 'ko', industryIdentifiers: [{ identifier: '9788936433598' }] } }] }) }
+  const result = await searchBooks({ query: 'Example' }, fetcher)
+  assert.equal(result.books.length, 2)
+  assert.equal(result.books[0].sourceUrl, 'https://openlibrary.org/works/OL1W')
+  assert.equal(result.books[0].isbn, '')
+  assert.equal(result.books[1].language, 'ko')
+  assert.deepEqual(result.errors, [])
+})
+
+test('book search keeps one source when the other fails', async () => {
+  const fetcher = async url => {
+    if (String(url).includes('googleapis')) throw new Error('offline')
+    return { ok: true, json: async () => ({ docs: [{ key: '/works/OL1W', title: 'Example' }] }) }
+  }
+  const result = await searchBooks({ query: 'Example' }, fetcher)
+  assert.equal(result.books.length, 1)
+  assert.deepEqual(result.errors, ['Google Books 도서 검색 실패'])
+})
 
 test('ISBN search labels exact edition covers and keeps source links', async () => {
   const fetcher = async url => {

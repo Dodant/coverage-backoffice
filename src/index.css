@@ -104,6 +104,15 @@ dd { margin: 0; overflow-wrap: anywhere; }
 /* 커버 탐색 */
 .discovery-book-results { display: flex; flex-wrap: wrap; gap: 8px; }
 .discovery-book-results button { text-align: left; }
+.book-search-results { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px; }
+.book-search-item { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: start; gap: 10px; min-height: 100px; text-align: left; }
+.book-search-item.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.book-search-item img, .book-search-item .nocover { width: 64px; height: 90px; object-fit: contain; background: var(--bg); border: 1px solid var(--line); border-radius: 3px; }
+.book-search-item .nocover { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 11px; }
+.book-search-item span:last-child { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.book-search-item small { color: var(--muted); }
+.selected-book { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; }
+.selected-book h2 { width: 100%; margin: 0; }
 .work-layout { display: grid; grid-template-columns: minmax(270px, 340px) minmax(0, 1fr); gap: 16px; align-items: start; }
 .work-original { border-color: var(--accent); }
 .work-original h2, .work-translations h2 { margin-top: 0; }
