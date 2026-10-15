@@ -38,6 +38,7 @@ export default function CoverDiscovery() {
   const [query, setQuery] = useState('')
   const [searchingBooks, setSearchingBooks] = useState(false)
   const [bookResults, setBookResults] = useState<SearchItem[] | null>(null)
+  const [bookSearchNotice, setBookSearchNotice] = useState('')
   const [original, setOriginal] = useState<Book | null>(null)
   const [translations, setTranslations] = useState<Book[]>([])
   const [targetId, setTargetId] = useState('')
@@ -61,11 +62,15 @@ export default function CoverDiscovery() {
     event.preventDefault()
     if (!query.trim()) return
     setSearchingBooks(true)
-    setError('')
+    setBookResults(null)
+    setBookSearchNotice('')
+    const input = { title: query.trim(), author: '', isbn: '' }
+    setSearchInput(input)
+    void discover(input)
     try {
-      const data = await api<{ items: SearchItem[] }>(`/search?${new URLSearchParams({ query: query.trim(), size: '50' })}`)
+      const data = await api<{ items: SearchItem[] }>(`/search?${new URLSearchParams({ query: query.trim(), size: '50' })}`, { signal: AbortSignal.timeout(5000) })
       setBookResults(data.items.filter(item => item.type === 'ORIGINAL'))
-    } catch (e) { setError(String(e)) }
+    } catch { setBookSearchNotice('등록 도서 검색에 연결하지 못했습니다. 온라인 커버 후보는 계속 탐색합니다.') }
     finally { setSearchingBooks(false) }
   }
 
@@ -217,15 +222,16 @@ export default function CoverDiscovery() {
 
   return <>
     <h1>커버 탐색·적용</h1>
-    <p className="muted">원서를 기준으로 번역서와 각 판의 표지를 비교합니다. 띠지 여부는 큰 이미지를 확인한 뒤 표시하세요.</p>
+    <p className="muted">원서 제목으로 커버를 찾습니다. 등록된 도서를 선택하면 번역서와 각 판도 비교할 수 있습니다. 띠지 여부는 큰 이미지를 확인한 뒤 표시하세요.</p>
     {!canManage && <p className="note">개발 미리보기에서는 커버 탐색과 비교를 사용할 수 있습니다. 표지 등록과 대표 표지 변경은 백엔드 관리자 인증이 필요합니다.</p>}
     <form className="panel row" onSubmit={searchBooks}>
       <input aria-label="원서 검색어" placeholder="원서 제목, 저자 또는 ISBN" value={query} onChange={e => setQuery(e.target.value)} />
-      <button disabled={searchingBooks || !query.trim()}>{searchingBooks ? '찾는 중…' : '원서 찾기'}</button>
+      <button disabled={searchingBooks || !query.trim()}>{searchingBooks ? '등록 도서 확인 중…' : '커버 찾기'}</button>
     </form>
+    {bookSearchNotice && <p className="note" role="status">{bookSearchNotice}</p>}
     {bookResults && <div className="panel discovery-book-results">
       {bookResults.map(item => <button key={item.id} onClick={() => pickOriginal(item)}>{item.title} <span className="muted small">{item.author} {item.year ?? ''}</span></button>)}
-      {!bookResults.length && <span className="muted">원서가 없습니다.</span>}
+      {!bookResults.length && <span className="muted">등록된 원서는 없습니다. 온라인 커버 후보는 아래에서 확인하세요.</span>}
     </div>}
     {original && <div className="work-layout">
       <section className="panel work-original">
@@ -277,7 +283,10 @@ export default function CoverDiscovery() {
       </label>}
       {!result.candidates.length && <p className="panel muted">커버 후보가 없습니다. 검색 조건을 바꿔 다시 탐색해 보세요.</p>}
       <div className="discovery-grid">{candidates.map(candidate => <article className={'discovery-card' + (selectedCandidate === candidate.id ? ' selected' : '')} key={candidate.id}>
-        <div className="discovery-image"><img src={candidate.imageUrl} alt={`${candidate.title} 커버 후보`} loading="lazy" onLoad={e => setDimensions(p => ({ ...p, [candidate.id]: `${e.currentTarget.naturalWidth}×${e.currentTarget.naturalHeight}` }))} onError={e => { e.currentTarget.style.display = 'none' }} /></div>
+        <div className="discovery-image"><img src={candidate.imageUrl} alt={`${candidate.title} 커버 후보`} loading="lazy" onLoad={e => {
+          const { naturalWidth, naturalHeight } = e.currentTarget
+          setDimensions(p => ({ ...p, [candidate.id]: `${naturalWidth}×${naturalHeight}` }))
+        }} onError={e => { e.currentTarget.style.display = 'none' }} /></div>
         <div className="discovery-info">
           <span className={'badge ' + (candidate.match === 'isbn' ? 's-created' : 's-dry')}>{candidate.match === 'isbn' ? 'ISBN 일치' : '다른 판 후보'}</span>
           <strong>{candidate.title}</strong><span className="muted small">{[candidate.publisher, candidate.year, candidate.edition].filter(Boolean).join(' · ')}</span>
@@ -293,15 +302,15 @@ export default function CoverDiscovery() {
             <button onClick={() => void copyImage(candidate)}>{copied === candidate.id ? '복사됨' : '주소 복사'}</button></div>
         </div>
       </article>)}</div>
-      {chosen && target && <div className="panel cover-compare">
-        <div><h3>현재 대표 표지</h3>{coverImage(target.frontCover) ? <img src={coverImage(target.frontCover)} alt="현재 대표 표지" /> : <p className="muted">표지 없음</p>}</div>
+      {chosen && <div className="panel cover-compare">
+        {target && <div><h3>현재 대표 표지</h3>{coverImage(target.frontCover) ? <img src={coverImage(target.frontCover)} alt="현재 대표 표지" /> : <p className="muted">표지 없음</p>}</div>}
         <div><h3>선택한 후보</h3><img src={chosen.imageUrl} alt="선택한 커버 후보" />
           <p className="muted small">{versionLabel(chosen)} · {chosen.source} {dimensions[chosen.id]}</p>
           <p className="muted small">띠지: {ribbons[chosen.id] === 'clean' ? '없음' : ribbons[chosen.id] === 'banded' ? '있음' : '판단 필요'}</p>
           {dimensions[chosen.id] && (() => { const [width, height] = dimensions[chosen.id].split('×').map(Number); return width < 800 || height < 1200 ? <p className="error small">기본 업로드 기준(800×1200)보다 작아 적용이 거절될 수 있습니다.</p> : null })()}
           {ribbons[chosen.id] === 'banded' && candidates.some(candidate => ribbons[candidate.id] === 'clean') && <p className="note">같은 판에 띠지 없는 후보가 있습니다.</p>}
           {!ribbons[chosen.id] && <p className="muted small">띠지 여부를 확인하고 표시하면 적용할 수 있습니다.</p>}
-          <button className="primary" disabled={!canManage || applying || loading || !ribbons[chosen.id] || ribbons[chosen.id] === 'unknown'} onClick={apply}>{applying ? '적용 중…' : '이 커버를 변형으로 추가하고 대표로 지정'}</button>
+          {target && <button className="primary" disabled={!canManage || applying || loading || !ribbons[chosen.id] || ribbons[chosen.id] === 'unknown'} onClick={apply}>{applying ? '적용 중…' : '이 커버를 변형으로 추가하고 대표로 지정'}</button>}
         </div>
       </div>}
     </section>}
