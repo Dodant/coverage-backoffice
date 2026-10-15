@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, safeUrl } from '../api'
 import { langName } from '../lang'
 
 type Cover = { id: string; imageUrl: string | null; thumbnailUrl: string | null; width: number; height: number; similarGroupId: string | null }
 type Book = { id: string; title: string; languageCode: string; isbn: string | null; frontCover: Cover | null }
 type SearchItem = { id: string; type: string; title: string; author: string; year: number | null; thumbnailUrl: string | null }
+type SimilarBook = { id: string; title: string; type: string }
 
 export default function Covers() {
   const { originalId } = useParams()
@@ -32,10 +33,25 @@ function BookSearch() {
     setItems(null)
     setSearching(true)
     try {
-      const r = await api<{ items: SearchItem[] }>(`/search?${new URLSearchParams({ query: q.trim(), size: '50' })}`)
-      if (id === requestId.current) setItems(r.items.filter(i => i.type === 'ORIGINAL'))
-    } catch (e) {
-      if (id === requestId.current) setError(String(e))
+      const query = q.trim()
+      let originals: SearchItem[]
+      try {
+        const r = await api<{ items: SearchItem[] }>(`/search?${new URLSearchParams({ query, size: '50' })}`, { signal: AbortSignal.timeout(5000) })
+        originals = r.items.filter(item => item.type === 'ORIGINAL')
+      } catch {
+        // 검색 인덱스가 실패해도 DB에 등록된 원서는 찾을 수 있다.
+        const isbn = query.replace(/[-\s]/g, '')
+        const path = /^\d{13}$|^\d{9}[\dXx]$/.test(isbn)
+          ? `/books/original/check-duplicate?${new URLSearchParams({ isbn })}`
+          : `/books/original/find-similar?${new URLSearchParams({ title: query, authorName: '' })}`
+        const similar = await api<SimilarBook[]>(path, { signal: AbortSignal.timeout(5000) })
+        originals = similar.filter(item => item.type === 'OriginalBook').map(item => ({
+          id: item.id, title: item.title, type: 'ORIGINAL', author: '', year: null, thumbnailUrl: null,
+        }))
+      }
+      if (id === requestId.current) setItems(originals)
+    } catch {
+      if (id === requestId.current) setError('등록 도서 검색 서버에 연결할 수 없습니다. 백엔드와 데이터베이스 실행 상태를 확인해 주세요.')
     } finally {
       if (id === requestId.current) setSearching(false)
     }
@@ -46,7 +62,7 @@ function BookSearch() {
         <input aria-label="원서 검색어" placeholder="원서 제목, 작가 또는 ISBN으로 찾기" value={q} onChange={e => setQ(e.target.value)} />
         <button disabled={searching || !q.trim()}>{searching ? '찾는 중…' : '찾기'}</button>
       </form>
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error" role="alert">{error} <Link to="/cover-discovery">온라인 커버 후보 탐색</Link>은 계속 사용할 수 있습니다.</p>}
       {items && (
         <div className="row" style={{ marginTop: 8 }}>
           {items.map(i => (
@@ -54,7 +70,7 @@ function BookSearch() {
               {i.title} <span className="muted small">{i.author} {i.year ?? ''}</span>
             </button>
           ))}
-          {!items.length && <span className="muted">원서가 없습니다</span>}
+          {!items.length && <span className="muted">등록된 원서가 없습니다. <Link to="/cover-discovery">온라인 커버 후보 탐색</Link>에서 먼저 표지를 확인할 수 있습니다.</span>}
         </div>
       )}
     </div>
