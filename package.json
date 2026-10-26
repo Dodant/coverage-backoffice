@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "cover-agent": "node server/cover-agent.mjs",
+    "test:cover-agent": "node --test server/cover-agent.test.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
