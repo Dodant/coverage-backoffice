@@ -24,6 +24,40 @@ test('book search keeps one source when the other fails', async () => {
   assert.deepEqual(result.errors, ['Google Books 도서 검색 실패'])
 })
 
+test('book search lists Kakao results first when a key is set', async () => {
+  process.env.KAKAO_REST_API_KEY = 'kakao-key'
+  try {
+    const requests = []
+    const fetcher = async (url, init) => {
+      requests.push({ url: String(url), auth: init?.headers?.Authorization })
+      if (String(url).includes('dapi.kakao.com')) return { ok: true, json: async () => ({ documents: [{
+        title: '소년이 온다', authors: ['한강'], isbn: '8936433598 9788936433598', datetime: '2014-05-19T00:00:00.000+09:00',
+        thumbnail: 'https://search1.kakaocdn.net/thumb/R120x174.q85/?fname=x', url: 'https://search.daum.net/search?q=x',
+      }] }) }
+      return { ok: true, json: async () => ({}) }
+    }
+    const result = await searchBooks({ query: '978-89-364-3359-8' }, fetcher)
+    const kakao = requests.find(r => r.url.includes('dapi.kakao.com'))
+    assert.equal(kakao.auth, 'KakaoAK kakao-key')
+    assert.match(kakao.url, /target=isbn/)
+    assert.deepEqual(result.books[0], {
+      id: 'kakao-9788936433598', source: 'Kakao', title: '소년이 온다', authors: ['한강'], isbn: '9788936433598',
+      year: 2014, language: '', imageUrl: 'https://search1.kakaocdn.net/thumb/R120x174.q85/?fname=x', sourceUrl: 'https://search.daum.net/search?q=x',
+    })
+  } finally {
+    delete process.env.KAKAO_REST_API_KEY
+  }
+})
+
+test('book search skips Kakao without a key', async () => {
+  const fetcher = async url => {
+    if (String(url).includes('dapi.kakao.com')) throw new Error('should not call Kakao')
+    return { ok: true, json: async () => ({}) }
+  }
+  const result = await searchBooks({ query: 'Example' }, fetcher)
+  assert.deepEqual(result.errors, [])
+})
+
 test('ISBN search labels exact edition covers and keeps source links', async () => {
   const fetcher = async url => {
     if (String(url).includes('openlibrary.org')) return { ok: true, json: async () => ({ key: '/books/OL1M', title: 'Example', covers: [123] }) }

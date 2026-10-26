@@ -17,6 +17,12 @@ function coverUrl(value) {
     return parsed.protocol === 'https:' && !parsed.username && !parsed.password && coverHost(parsed.hostname) ? parsed.href : ''
   } catch { return '' }
 }
+const kakaoThumb = value => {
+  try {
+    const url = new URL(https(value))
+    return url.protocol === 'https:' && url.hostname === 'search1.kakaocdn.net' ? url.href : ''
+  } catch { return '' }
+}
 function fail(status, message) {
   const error = new Error(message)
   error.status = status
@@ -112,8 +118,8 @@ function validIsbn(value) {
   return false
 }
 
-async function jsonFrom(url, fetcher) {
-  const response = await fetcher(url, { headers: { 'User-Agent': 'coverage-cover-agent/1.0 (cover discovery)' }, signal: AbortSignal.timeout(10000) })
+async function jsonFrom(url, fetcher, headers = {}) {
+  const response = await fetcher(url, { headers: { 'User-Agent': 'coverage-cover-agent/1.0 (cover discovery)', ...headers }, signal: AbortSignal.timeout(10000) })
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   return response.json()
 }
@@ -129,17 +135,33 @@ export async function searchBooks(input = {}, fetcher = fetch) {
   google.searchParams.set('q', /^\d{10,13}$/.test(isbnDigits(query)) ? `isbn:${isbnDigits(query)}` : query)
   google.searchParams.set('maxResults', '20')
   if (process.env.GOOGLE_BOOKS_API_KEY) google.searchParams.set('key', process.env.GOOGLE_BOOKS_API_KEY)
+  const kakaoKey = process.env.KAKAO_REST_API_KEY
+  const kakao = new URL('https://dapi.kakao.com/v3/search/book')
+  kakao.searchParams.set('query', /^\d{10,13}$/.test(isbnDigits(query)) ? isbnDigits(query) : query)
+  if (/^\d{10,13}$/.test(isbnDigits(query))) kakao.searchParams.set('target', 'isbn')
+  kakao.searchParams.set('size', '20')
 
-  const searches = await Promise.allSettled([
-    jsonFrom(ol, fetcher).then(data => (data.docs ?? []).filter(doc => /^\/works\/OL\d+W$/.test(doc.key ?? '')).map(doc => ({
+  const sources = [
+    // 국내 도서는 카카오가 가장 잘 찾으므로 맨 앞에 둔다. 키가 없으면 건너뛴다.
+    ...(kakaoKey ? [['Kakao', jsonFrom(kakao, fetcher, { Authorization: `KakaoAK ${kakaoKey}` }).then(data => (data.documents ?? []).map(doc => {
+      const identifiers = String(doc.isbn ?? '').split(/\s+/).map(isbnDigits).filter(validIsbn)
+      const isbn = identifiers.find(value => /^\d{13}$/.test(value)) ?? identifiers[0] ?? ''
+      return {
+        id: `kakao-${isbn || doc.url}`, source: 'Kakao', title: doc.title ?? '', authors: (doc.authors ?? []).slice(0, 3), isbn,
+        year: yearOf(doc.datetime), language: '',
+        // 카카오 썸네일은 검색 목록 표시용이다. 커버 적용 허용 출처(coverUrl)에는 넣지 않는다.
+        imageUrl: kakaoThumb(doc.thumbnail), sourceUrl: https(doc.url),
+      }
+    }).filter(item => item.title).slice(0, 20))]] : []),
+    ['Open Library', jsonFrom(ol, fetcher).then(data => (data.docs ?? []).filter(doc => /^\/works\/OL\d+W$/.test(doc.key ?? '')).map(doc => ({
       id: `ol-${doc.key.split('/').pop()}`, source: 'Open Library', title: doc.title ?? '',
       authors: (doc.author_name ?? []).slice(0, 1), isbn: '',
       // 작품 검색 결과의 ISBN/언어는 여러 번역판이 섞여 있으므로 판 정보로 쓰지 않는다.
       year: doc.first_publish_year ?? null, language: '',
       imageUrl: Number.isInteger(doc.cover_i) ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg?default=false` : '',
       sourceUrl: `https://openlibrary.org${doc.key}`,
-    })).slice(0, 20)),
-    jsonFrom(google, fetcher).then(data => (data.items ?? []).map(item => {
+    })).slice(0, 20))],
+    ['Google Books', jsonFrom(google, fetcher).then(data => (data.items ?? []).map(item => {
       const info = item.volumeInfo ?? {}
       const identifiers = (info.industryIdentifiers ?? []).map(value => isbnDigits(value.identifier ?? '')).filter(validIsbn)
       return {
@@ -149,15 +171,16 @@ export async function searchBooks(input = {}, fetcher = fetch) {
         imageUrl: coverUrl(info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail),
         sourceUrl: https(info.infoLink) || `https://books.google.com/books?id=${encodeURIComponent(item.id)}`,
       }
-    }).filter(item => item.title).slice(0, 20)),
-  ])
+    }).filter(item => item.title).slice(0, 20))],
+  ]
+  const searches = await Promise.allSettled(sources.map(([, search]) => search))
   const errors = []
   const books = []
-  if (searches[0].status === 'fulfilled') books.push(...searches[0].value)
-  else errors.push('Open Library 도서 검색 실패')
-  if (searches[1].status === 'fulfilled') books.push(...searches[1].value)
-  else errors.push('Google Books 도서 검색 실패')
-  if (errors.length === 2) fail(502, '도서 검색 출처에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.')
+  searches.forEach((search, index) => {
+    if (search.status === 'fulfilled') books.push(...search.value)
+    else errors.push(`${sources[index][0]} 도서 검색 실패`)
+  })
+  if (errors.length === sources.length) fail(502, '도서 검색 출처에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.')
   return { books, errors }
 }
 
