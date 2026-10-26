@@ -1,5 +1,5 @@
 import { useRef, useState, type FormEvent } from 'react'
-import { api, safeUrl, session } from '../api'
+import { api, coverAgent, safeUrl, session } from '../api'
 import { langName } from '../lang'
 
 type Cover = {
@@ -81,15 +81,10 @@ export default function CoverDiscovery() {
     setResult(null)
     setProgress(null)
     const term = query.trim()
-    const online = fetch('/cover-agent/books/search', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: term }),
-      signal: AbortSignal.timeout(15000),
-    }).then(async response => {
-      const data = await response.json().catch(() => null)
-      if (!response.ok) throw new Error(data?.message ?? '온라인 도서 검색에 연결할 수 없습니다.')
+    const online = coverAgent<BookSearchResult>('/books/search', { query: term }, { signal: AbortSignal.timeout(15000) }).then(data => {
       if (id === bookSearchId.current) {
-        setOnlineBooks((data as BookSearchResult).books)
-        setBookSearchNotice((data as BookSearchResult).errors.join(' · '))
+        setOnlineBooks(data.books)
+        setBookSearchNotice(data.errors.join(' · '))
       }
     }).catch(e => { if (id === bookSearchId.current) setBookSearchError(e instanceof Error ? e.message : String(e)) })
     const registered = api<{ items: SearchItem[] }>(`/search?${new URLSearchParams({ query: term, size: '50' })}`, { signal: AbortSignal.timeout(5000) })
@@ -228,16 +223,11 @@ export default function CoverDiscovery() {
     setError('')
     setMessage('이미지를 검증하고 등록하는 중…')
     try {
-      const response = await fetch('/cover-agent/apply', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session()?.token ?? ''}` },
-        body: JSON.stringify({
-          bookId: book.id, kind: book.id === original.id ? 'original' : 'translated',
-          imageUrl: candidate.imageUrl, source: candidate.source, ribbon: ribbons[candidate.id] ?? 'unknown',
-          edition: candidate.edition, publisher: candidate.publisher, year: candidate.year,
-        }),
-      })
-      const body = await response.json().catch(() => null)
-      if (!response.ok) throw new Error(body?.message ?? `적용 실패 (HTTP ${response.status})`)
+      const body = await coverAgent<{ warning?: string }>('/apply', {
+        bookId: book.id, kind: book.id === original.id ? 'original' : 'translated',
+        imageUrl: candidate.imageUrl, source: candidate.source, ribbon: ribbons[candidate.id] ?? 'unknown',
+        edition: candidate.edition, publisher: candidate.publisher, year: candidate.year,
+      }, { token: session()?.token ?? '' })
       await loadWork(original.id, book.id)
       setMessage(body.warning ?? `${book.title}에 표지를 추가하고 대표 표지로 지정했습니다.`)
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); setMessage('') }

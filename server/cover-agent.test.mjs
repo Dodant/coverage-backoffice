@@ -182,19 +182,18 @@ test('changbi file paths stay inside their folders', () => {
 test('picking a zip image as the changbi cover is kept in overrides', async () => {
   const dir = await changbiFixture({ cover_status: '미확인' })
   const book = (await loadChangbi(dir))[0]
-  const calls = []
-  const tool = async (_dir, ...args) => { calls.push(args); return {} }
   const real = createHash('sha1').update(book.url).digest('hex').slice(0, 16) // zip별 후보 폴더 이름
   await mkdir(join(dir, 'covers/_candidates', real))
   await writeFile(join(dir, 'covers/_candidates', real, '1.jpg'), JPEG)
-  await writeFile(join(dir, 'covers/_candidates', real, 'manifest.json'), JSON.stringify([{ name: '책_띠지.jpg', file: '1.jpg' }]))
-  await assert.rejects(pickChangbiCover({ key: book.key, file: '1.jpg', ribbon: 'unknown' }, dir, tool), /띠지 여부/)
-  await assert.rejects(pickChangbiCover({ key: book.key, file: '../1.jpg', ribbon: 'clean' }, dir, tool), /이미지 선택/)
-  const picked = await pickChangbiCover({ key: book.key, file: '1.jpg', ribbon: 'banded' }, dir, tool)
+  await writeFile(join(dir, 'covers/_candidates', real, 't1.jpg'), 'thumb')
+  await writeFile(join(dir, 'covers/_candidates', real, 'manifest.json'), JSON.stringify([{ name: '책_띠지.jpg', file: '1.jpg', thumb: 't1.jpg' }]))
+  await assert.rejects(pickChangbiCover({ key: book.key, file: '1.jpg', ribbon: 'unknown' }, dir), /띠지 여부/)
+  await assert.rejects(pickChangbiCover({ key: book.key, file: '../1.jpg', ribbon: 'clean' }, dir), /이미지 선택/)
+  const picked = await pickChangbiCover({ key: book.key, file: '1.jpg', ribbon: 'banded' }, dir)
   assert.equal(picked.cover_status, '띠지')
   assert.equal(picked.cover_file, `9788936433598_${real}.jpg`)
   assert.deepEqual(await readFile(join(dir, 'covers', picked.cover_file)), JPEG)
-  assert.equal(calls[0][0], 'thumb')
+  assert.equal(await readFile(join(dir, 'thumbs', `9788936433598_${real}.jpg`), 'utf8'), 'thumb')
   const reloaded = (await loadChangbi(dir))[0]
   assert.equal(reloaded.cover_status, '띠지')
   assert.equal(reloaded.cover_source_name, '책_띠지.jpg')
@@ -217,7 +216,7 @@ test('applying a changbi cover uploads the local file and records where it went'
   const result = await applyChangbiCover({ key, bookId, kind: 'translated' }, 'Bearer t', { dir, callBackend: backend })
   assert.deepEqual(result, { coverId: 'cover-1', representative: true, reused: false })
   const variant = JSON.parse(calls.find(call => call.path === `/books/${bookId}/covers`).init.body)
-  assert.equal(variant.sourceUrl, `${key}#${encodeURIComponent('책_표1.jpg')}`)
+  assert.equal(variant.sourceUrl, `${key}#${createHash('sha1').update(JPEG).digest('hex').slice(0, 16)}-clean`)
   assert.equal(variant.sourceName, '창비 보도자료')
   assert.equal(variant.label, '띠지 없음 · 창비 · 2026-10')
   assert.equal((await loadChangbi(dir))[0].applied.coverId, 'cover-1')
@@ -253,4 +252,42 @@ test('only local JSON requests reach the agent', () => {
   assert.equal(localRequest({ method: 'POST', headers: { host: '127.0.0.1:8766' } }), false)
   assert.equal(localRequest({ method: 'GET', headers: { host: 'evil.example:8766' } }), false)
   assert.equal(localRequest({ method: 'POST', headers: { host: 'localhost.evil.example', ...json } }), false)
+})
+
+test('re-applying a changbi cover with a corrected ribbon uploads a new variant', async () => {
+  const dir = await changbiFixture({ cover_status: 'clean', cover_file: 'c.jpg' })
+  await writeFile(join(dir, 'covers/c.jpg'), JPEG)
+  const bookId = '00000000-0000-4000-8000-000000000001'
+  const variants = []
+  const backend = async (path, auth, init = {}) => {
+    if (path === `/books/original/${bookId}`) return { covers: variants.map((v, i) => ({ id: `v${i}`, sourceUrl: v.sourceUrl })) }
+    if (path === `/books/${bookId}/covers`) { variants.push(JSON.parse(init.body)); return { id: `v${variants.length - 1}` } }
+    return {}
+  }
+  const key = (await loadChangbi(dir))[0].key
+  const apply = () => applyChangbiCover({ key, bookId, kind: 'original' }, 'Bearer t', { dir, callBackend: backend })
+  assert.equal((await apply()).reused, false)
+  assert.equal((await apply()).reused, true)
+  await writeFile(join(dir, 'overrides.json'), JSON.stringify({ [key]: { cover_status: '띠지' } }))
+  assert.equal((await apply()).reused, false)
+  assert.equal(variants[1].label, '띠지 있음 · 창비 · 2026-10')
+})
+
+test('applying a changbi cover whose file is gone explains instead of leaking paths', async () => {
+  const dir = await changbiFixture({ cover_status: 'clean', cover_file: 'gone.jpg' })
+  const key = (await loadChangbi(dir))[0].key
+  await assert.rejects(applyChangbiCover({ key, bookId: '00000000-0000-4000-8000-000000000001', kind: 'original' }, 'Bearer t', { dir, callBackend: async () => ({}) }),
+    error => error.status === 404 && !error.message.includes(dir))
+})
+
+test('Kakao results sharing an ISBN are listed once', async () => {
+  process.env.KAKAO_REST_API_KEY = 'kakao-key'
+  try {
+    const doc = { title: '소년이 온다', authors: ['한강'], isbn: '8936433598 9788936433598', url: 'https://search.daum.net/search?q=x' }
+    const fetcher = async url => ({ ok: true, json: async () => String(url).includes('dapi.kakao.com') ? { documents: [doc, { ...doc, title: '소년이 온다 (리커버)' }] } : {} })
+    const result = await searchBooks({ query: '소년이 온다' }, fetcher)
+    assert.deepEqual(result.books.filter(book => book.source === 'Kakao').map(book => book.id), ['kakao-9788936433598'])
+  } finally {
+    delete process.env.KAKAO_REST_API_KEY
+  }
 })

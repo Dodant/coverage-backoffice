@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, session } from '../api'
+import { api, coverAgent, safeUrl, session } from '../api'
 import { Pager, type Page } from '../ui'
 
 // 창비 자료실 보도자료에서 수집한 책(../changbi-press, cover-agent가 제공)
@@ -20,16 +20,6 @@ const STATUS: Record<ChangbiBook['cover_status'], string> = { clean: '띠지 없
 const usable = (book: ChangbiBook) => book.cover_status === 'clean' || book.cover_status === '띠지'
 const needsReview = (book: ChangbiBook) => !usable(book) || !book.isbn || Boolean(book.isbn_shared)
 const SIZE = 60
-
-async function agent<T>(path: string, body: unknown, token?: string): Promise<T> {
-  const response = await fetch('/cover-agent' + path, {
-    method: 'POST', body: JSON.stringify(body),
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-  })
-  const data = await response.json().catch(() => null)
-  if (!response.ok) throw new Error(data?.message ?? `cover-agent HTTP ${response.status}`)
-  return data as T
-}
 
 export default function Changbi() {
   const [books, setBooks] = useState<ChangbiBook[] | null>(null)
@@ -132,9 +122,9 @@ function Detail({ book, thumb, onChange }: { book: ChangbiBook; thumb: string; o
     try { await task() } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusy('') }
   }
 
-  const loadCandidates = () => work('zip 이미지를 받는 중…', async () => setCandidates(await agent('/changbi/candidates', { key: book.key })))
+  const loadCandidates = () => work('zip 이미지를 받는 중…', async () => setCandidates(await coverAgent('/changbi/candidates', { key: book.key })))
   const pick = (file: string, ribbon: 'clean' | 'banded') => work('표지로 저장하는 중…', async () => {
-    const row = await agent<ChangbiBook>('/changbi/pick', { key: book.key, file, ribbon })
+    const row = await coverAgent<ChangbiBook>('/changbi/pick', { key: book.key, file, ribbon })
     onChange({ cover_status: row.cover_status, cover_file: row.cover_file, cover_source_name: row.cover_source_name })
     setMessage(`${ribbon === 'clean' ? '띠지 없는' : '띠지 있는'} 표지로 저장했습니다.`)
   })
@@ -148,7 +138,7 @@ function Detail({ book, thumb, onChange }: { book: ChangbiBook; thumb: string; o
   const apply = (item: SearchItem) => work('표지를 올리는 중…', async () => {
     const kind = item.type === 'ORIGINAL' ? 'original' : 'translated'
     const bookId = item.id.replace(/^(original|translated)_/, '')
-    const result = await agent<{ coverId: string; warning?: string }>('/changbi/apply', { key: book.key, bookId, kind }, token)
+    const result = await coverAgent<{ coverId: string; warning?: string }>('/changbi/apply', { key: book.key, bookId, kind }, { token })
     onChange({ applied: { bookId, kind, coverId: result.coverId, at: new Date().toISOString() } })
     setMessage(result.warning ?? `${item.title}에 표지를 추가하고 대표 표지로 지정했습니다.`)
   })
@@ -175,7 +165,7 @@ function Detail({ book, thumb, onChange }: { book: ChangbiBook; thumb: string; o
       <dt>출간</dt><dd>{book.pub_month || '-'}{book.pub_month_from_upload && <span className="muted small"> 업로드월로 추정</span>}</dd>
       <dt>판형</dt><dd>{[book.format, book.pages && `${book.pages}쪽`, book.price && `${book.price.toLocaleString()}원`].filter(Boolean).join(' · ') || '-'}</dd>
       <dt>출판사</dt><dd>{book.imprint || '창비'}</dd>
-      <dt>자료</dt><dd><a href={book.url} target="_blank" rel="noopener noreferrer">보도자료 zip</a>{book.error && <span className="error small"> {book.error}</span>}</dd>
+      <dt>자료</dt><dd><a href={safeUrl(book.url)} target="_blank" rel="noopener noreferrer">보도자료 zip</a>{book.error && <span className="error small"> {book.error}</span>}</dd>
       {book.applied && <><dt>적용</dt><dd>{book.applied.kind === 'original' ? '원서' : '번역서'} {book.applied.bookId.slice(0, 8)} · {new Date(book.applied.at).toLocaleString()}</dd></>}
     </dl>
     {busy && <p className="note" role="status">{busy}</p>}

@@ -45,5 +45,16 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   return data as T
 }
 
+// 커버 탐색 서비스(cover-agent) POST. JSON이 아니면 서비스가 403으로 거절한다.
+export async function coverAgent<T>(path: string, body: unknown, init: { token?: string; signal?: AbortSignal } = {}): Promise<T> {
+  const res = await fetch('/cover-agent' + path, {
+    method: 'POST', body: JSON.stringify(body), signal: init.signal,
+    headers: { 'Content-Type': 'application/json', ...(init.token ? { Authorization: `Bearer ${init.token}` } : {}) },
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new Error(data?.message ?? `커버 탐색 서비스에 연결할 수 없습니다 (HTTP ${res.status}). npm run cover-agent를 실행해 주세요.`)
+  return data as T
+}
+
 // http(s)만 href/src에 넣는다 (에이전트 기록은 웹에서 모은 값이라 javascript: 등을 막는다)
 export const safeUrl = (u: unknown) => (/^https?:\/\//i.test(String(u ?? '')) ? String(u) : '')

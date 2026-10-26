@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFile, readFile, stat, writeFile } from 'node:fs/promises'
+import { copyFile, readFile, rename, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -167,7 +167,7 @@ export async function searchBooks(input = {}, fetcher = fetch) {
         // 카카오 썸네일은 검색 목록 표시용이다. 커버 적용 허용 출처(coverUrl)에는 넣지 않는다.
         imageUrl: kakaoThumb(doc.thumbnail), sourceUrl: https(doc.url),
       }
-    }).filter(item => item.title).slice(0, 20))]] : []),
+    }).filter((item, index, all) => item.title && all.findIndex(other => other.id === item.id) === index).slice(0, 20))]] : []),
     ['Open Library', jsonFrom(ol, fetcher).then(data => (data.docs ?? []).filter(doc => /^\/works\/OL\d+W$/.test(doc.key ?? '')).map(doc => ({
       id: `ol-${doc.key.split('/').pop()}`, source: 'Open Library', title: doc.title ?? '',
       authors: (doc.author_name ?? []).slice(0, 1), isbn: '',
@@ -354,7 +354,8 @@ function updateOverride(dir, key, change) {
     const path = join(dir, 'overrides.json')
     const overrides = await readJson(path, {})
     overrides[key] = { ...overrides[key], ...change }
-    await writeFile(path, JSON.stringify(overrides, null, 1))
+    await writeFile(path + '.tmp', JSON.stringify(overrides, null, 1))
+    await rename(path + '.tmp', path) // 쓰는 도중 읽거나 죽어도 깨진 JSON이 남지 않게
   })
   overridesLock = next.catch(() => {})
   return next
@@ -372,7 +373,9 @@ export async function changbiCandidates(input, dir = changbiDir, tool = changbiT
   return { id, items }
 }
 
-export async function pickChangbiCover(input, dir = changbiDir, tool = changbiTool) {
+const replaceFile = async (src, dest) => { await copyFile(src, dest + '.tmp'); await rename(dest + '.tmp', dest) }
+
+export async function pickChangbiCover(input, dir = changbiDir) {
   const book = await changbiBook(dir, input.key)
   if (!['clean', 'banded'].includes(input.ribbon)) fail(400, '띠지 여부를 선택해 주세요.')
   if (!/^\d+\.(?:jpg|png)$/.test(String(input.file))) fail(400, '이미지 선택이 올바르지 않습니다.')
@@ -382,8 +385,9 @@ export async function pickChangbiCover(input, dir = changbiDir, tool = changbiTo
   if (!picked) fail(400, 'zip 이미지 목록을 먼저 불러와 주세요.')
   const stem = book.cover_file ? book.cover_file.replace(/\.[^.]+$/, '') : `${book.isbn || 'x'}_${id}`
   const coverFile = stem + extname(input.file)
-  await copyFile(join(dir, 'covers/_candidates', id, input.file), join(dir, 'covers', coverFile))
-  await tool(dir, 'thumb', join(dir, 'covers', coverFile), join(dir, 'thumbs', `${stem}.jpg`))
+  // 후보 썸네일은 zip을 풀 때 이미 만들었다
+  await replaceFile(join(dir, 'covers/_candidates', id, picked.thumb), join(dir, 'thumbs', `${stem}.jpg`))
+  await replaceFile(join(dir, 'covers/_candidates', id, input.file), join(dir, 'covers', coverFile))
   const change = { cover_status: input.ribbon === 'clean' ? 'clean' : '띠지', cover_file: coverFile, cover_source_name: picked.name }
   await updateOverride(dir, book.key, change)
   return { ...book, ...change }
@@ -394,21 +398,21 @@ export async function applyChangbiCover(input, authorization, { dir = changbiDir
   if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(bookId) || !['original', 'translated'].includes(input.kind)) fail(400, '도서 선택이 올바르지 않습니다.')
   const book = await changbiBook(dir, input.key)
   if (!book.cover_file || !['clean', '띠지'].includes(book.cover_status)) fail(400, '적용할 표지가 없습니다. zip 이미지에서 먼저 골라 주세요.')
+  const path = join(dir, 'covers', book.cover_file)
+  const bytes = await readFile(path).catch(() => fail(404, '표지 파일이 없습니다. zip 이미지에서 다시 골라 주세요.'))
   const image = async () => {
-    let path = join(dir, 'covers', book.cover_file)
-    if ((await stat(path)).size > 10 * 1024 * 1024) { // 백엔드 업로드 한도
-      const shrunk = join(dir, 'covers/_candidates', `upload-${candidateId(book.url)}.jpg`)
-      await tool(dir, 'shrink', path, shrunk)
-      path = shrunk
-    }
-    return imageOf(await readFile(path))
+    if (bytes.length <= 10 * 1024 * 1024) return imageOf(bytes)
+    const shrunk = join(dir, 'covers/_candidates', `upload-${candidateId(book.url)}.jpg`) // 백엔드 업로드 한도
+    await tool(dir, 'shrink', path, shrunk)
+    return imageOf(await readFile(shrunk))
   }
+  const ribbon = book.cover_status === 'clean' ? 'clean' : 'banded'
   const result = await attachCover({
     bookId, kind: input.kind, image,
-    // 다시 고른 표지는 새 변형으로 올라가도록 고른 파일 이름을 출처 주소에 넣는다
-    sourceUrl: `${book.url}#${encodeURIComponent(book.cover_source_name ?? book.cover_file)}`,
+    // 다른 이미지나 띠지 판정을 바꿔 다시 적용하면 새 변형으로 올라가도록 내용 해시와 띠지 상태를 넣는다
+    sourceUrl: `${book.url}#${createHash('sha1').update(bytes).digest('hex').slice(0, 16)}-${ribbon}`,
     sourceName: '창비 보도자료',
-    label: [book.cover_status === 'clean' ? '띠지 없음' : '띠지 있음', book.imprint || '창비', book.pub_month].filter(Boolean).join(' · '),
+    label: [ribbon === 'clean' ? '띠지 없음' : '띠지 있음', book.imprint || '창비', book.pub_month].filter(Boolean).join(' · '),
   }, authorization, callBackend)
   await updateOverride(dir, book.key, { applied: { bookId, kind: input.kind, coverId: result.coverId, at: new Date().toISOString() } })
   return result
@@ -463,7 +467,9 @@ export function startServer() {
       if (request.method === 'GET') {
         if (url.pathname === '/changbi/books') return send(response, 200, await loadChangbi())
         const file = url.pathname.match(/^\/changbi\/(covers|thumbs|candidates)\/(.+)$/)
-        const path = file && changbiFile(changbiDir, file[1], decodeURIComponent(file[2]))
+        let name = ''
+        try { name = file ? decodeURIComponent(file[2]) : '' } catch { /* 잘못된 %인코딩은 없는 파일로 본다 */ }
+        const path = name && changbiFile(changbiDir, file[1], name)
         if (path) return sendFile(response, path, file[1] === 'candidates')
         return send(response, 404, { message: 'Not found' })
       }
