@@ -63,13 +63,16 @@ async function downloadCover(rawUrl, fetcher = fetch) {
       if (size > 10 * 1024 * 1024) fail(400, '이미지가 10MB를 넘습니다.')
       chunks.push(Buffer.from(chunk))
     }
-    const bytes = Buffer.concat(chunks)
-    const mime = bytes.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff])) ? 'image/jpeg'
-      : bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ? 'image/png' : ''
-    if (!mime) fail(400, 'JPEG 또는 PNG 커버만 적용할 수 있습니다.')
-    return { bytes, mime }
+    return imageOf(Buffer.concat(chunks))
   }
   fail(502, '이미지 주소의 이동 횟수가 너무 많습니다.')
+}
+
+function imageOf(bytes) {
+  const mime = bytes.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff])) ? 'image/jpeg'
+    : bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ? 'image/png' : ''
+  if (!mime) fail(400, 'JPEG 또는 PNG 커버만 적용할 수 있습니다.')
+  return { bytes, mime }
 }
 
 export async function applyCover(input, authorization, fetcher = fetch, callBackend = backendJson) {
@@ -84,22 +87,27 @@ export async function applyCover(input, authorization, fetcher = fetch, callBack
   const ribbon = input.ribbon
   if (!['clean', 'banded', 'unknown'].includes(ribbon)) fail(400, '띠지 확인 상태를 선택해 주세요.')
 
+  const label = [ribbon === 'clean' ? '띠지 없음' : ribbon === 'banded' ? '띠지 있음' : '띠지 확인 필요',
+    clean(input.edition), clean(input.publisher), input.year ? String(input.year) : ''].filter(Boolean).join(' · ')
+  return attachCover({ bookId, kind, sourceUrl: imageUrl, sourceName: input.source, label, image: () => downloadCover(imageUrl, fetcher) }, authorization, callBackend)
+}
+
+// 표지 변형으로 올리고 대표로 지정한다. 같은 출처 주소로 이미 올린 변형이 있으면 다시 올리지 않는다.
+async function attachCover({ bookId, kind, sourceUrl, sourceName, label, image }, authorization, callBackend) {
   const book = await callBackend(`/books/${kind}/${bookId}`, authorization)
-  const existing = (book.covers ?? []).find(cover => !cover.hidden && cover.sourceUrl === imageUrl)
+  const existing = (book.covers ?? []).find(cover => !cover.hidden && cover.sourceUrl === sourceUrl)
   let coverId = existing?.id
   if (!coverId) {
-    const { bytes, mime } = await downloadCover(imageUrl, fetcher)
+    const { bytes, mime } = await image()
     const form = new FormData()
     form.append('file', new Blob([bytes], { type: mime }), mime === 'image/png' ? 'cover.png' : 'cover.jpg')
     const upload = await callBackend('/covers', authorization, { method: 'POST', body: form })
-    const label = [ribbon === 'clean' ? '띠지 없음' : ribbon === 'banded' ? '띠지 있음' : '띠지 확인 필요',
-      clean(input.edition), clean(input.publisher), input.year ? String(input.year) : ''].filter(Boolean).join(' · ').slice(0, 100)
     const cover = await callBackend(`/books/${bookId}/covers`, authorization, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         imageUrl: upload.originalUrl, thumbnailUrl: upload.thumbnailUrl,
         originalFileName: upload.originalFileName, width: upload.width, height: upload.height, fileSize: upload.fileSize,
-        imageSource: 'LINK', sourceUrl: imageUrl, sourceName: input.source, label,
+        imageSource: 'LINK', sourceUrl, sourceName, label: label.slice(0, 100),
         languageCode: book.languageCode, countryCode: book.countryCode,
       }),
     })
