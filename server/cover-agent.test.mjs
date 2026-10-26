@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { applyCover, discover, searchBooks } from './cover-agent.mjs'
+import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { applyChangbiCover, applyCover, changbiFile, discover, loadChangbi, pickChangbiCover, searchBooks } from './cover-agent.mjs'
 
 test('book search returns selectable bibliographic results before cover discovery', async () => {
   const fetcher = async url => String(url).includes('openlibrary.org')
@@ -156,4 +160,85 @@ test('rejects non-provider image URLs before downloading', async () => {
     bookId: '11111111-1111-4111-8111-111111111111', kind: 'original',
     imageUrl: 'http://127.0.0.1/private', source: 'Open Library', ribbon: 'clean',
   }, 'Bearer token'), /커버 이미지 주소/)
+})
+
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3])
+async function changbiFixture(book) {
+  const dir = await mkdtemp(join(tmpdir(), 'changbi-'))
+  await mkdir(join(dir, 'covers/_candidates'), { recursive: true })
+  await mkdir(join(dir, 'thumbs'))
+  await writeFile(join(dir, 'books.json'), JSON.stringify([{ url: 'https://kr.object.ncloudstorage.com/changbi/a.zip', title: '책', isbn: '9788936433598', imprint: '창비', pub_month: '2026-10', ...book }]))
+  return dir
+}
+
+test('changbi file paths stay inside their folders', () => {
+  const dir = '/data/changbi'
+  assert.equal(changbiFile(dir, 'covers', '9788936433598_a.jpg'), '/data/changbi/covers/9788936433598_a.jpg')
+  assert.equal(changbiFile(dir, 'candidates', '0123456789abcdef/t0.jpg'), '/data/changbi/covers/_candidates/0123456789abcdef/t0.jpg')
+  for (const [kind, name] of [['covers', '../books.json'], ['covers', '../x.jpg'], ['covers', '_candidates/x.jpg'], ['covers', '.x.jpg'], ['thumbs', 'x.png'], ['candidates', '../../x.jpg'], ['etc', 'x.jpg']])
+    assert.equal(changbiFile(dir, kind, name), null, `${kind}/${name}`)
+})
+
+test('picking a zip image as the changbi cover is kept in overrides', async () => {
+  const dir = await changbiFixture({ cover_status: '미확인' })
+  const book = (await loadChangbi(dir))[0]
+  const calls = []
+  const tool = async (_dir, ...args) => { calls.push(args); return {} }
+  const real = createHash('sha1').update(book.url).digest('hex').slice(0, 16) // zip별 후보 폴더 이름
+  await mkdir(join(dir, 'covers/_candidates', real))
+  await writeFile(join(dir, 'covers/_candidates', real, '1.jpg'), JPEG)
+  await writeFile(join(dir, 'covers/_candidates', real, 'manifest.json'), JSON.stringify([{ name: '책_띠지.jpg', file: '1.jpg' }]))
+  await assert.rejects(pickChangbiCover({ key: book.key, file: '1.jpg', ribbon: 'unknown' }, dir, tool), /띠지 여부/)
+  await assert.rejects(pickChangbiCover({ key: book.key, file: '../1.jpg', ribbon: 'clean' }, dir, tool), /이미지 선택/)
+  const picked = await pickChangbiCover({ key: book.key, file: '1.jpg', ribbon: 'banded' }, dir, tool)
+  assert.equal(picked.cover_status, '띠지')
+  assert.equal(picked.cover_file, `9788936433598_${real}.jpg`)
+  assert.deepEqual(await readFile(join(dir, 'covers', picked.cover_file)), JPEG)
+  assert.equal(calls[0][0], 'thumb')
+  const reloaded = (await loadChangbi(dir))[0]
+  assert.equal(reloaded.cover_status, '띠지')
+  assert.equal(reloaded.cover_source_name, '책_띠지.jpg')
+})
+
+test('applying a changbi cover uploads the local file and records where it went', async () => {
+  const dir = await changbiFixture({ cover_status: 'clean', cover_file: 'c.jpg', cover_source_name: '책_표1.jpg' })
+  await writeFile(join(dir, 'covers/c.jpg'), JPEG)
+  const bookId = '00000000-0000-4000-8000-000000000001'
+  const calls = []
+  const backend = async (path, auth, init = {}) => {
+    calls.push({ path, init })
+    if (path === `/books/translated/${bookId}`) return { covers: [], languageCode: 'ko', countryCode: 'KR' }
+    if (path === '/covers') return { originalUrl: 'o', thumbnailUrl: 't' }
+    if (path === `/books/${bookId}/covers`) return { id: 'cover-1' }
+    return {}
+  }
+  const key = (await loadChangbi(dir))[0].key
+  await assert.rejects(applyChangbiCover({ key, bookId: 'nope', kind: 'translated' }, 'Bearer t', { dir, callBackend: backend }), /도서 선택/)
+  const result = await applyChangbiCover({ key, bookId, kind: 'translated' }, 'Bearer t', { dir, callBackend: backend })
+  assert.deepEqual(result, { coverId: 'cover-1', representative: true, reused: false })
+  const variant = JSON.parse(calls.find(call => call.path === `/books/${bookId}/covers`).init.body)
+  assert.equal(variant.sourceUrl, `${key}#${encodeURIComponent('책_표1.jpg')}`)
+  assert.equal(variant.sourceName, '창비 보도자료')
+  assert.equal(variant.label, '띠지 없음 · 창비 · 2026-10')
+  assert.equal((await loadChangbi(dir))[0].applied.coverId, 'cover-1')
+})
+
+test('changbi covers over the backend limit are shrunk before upload', async () => {
+  const dir = await changbiFixture({ cover_status: 'clean', cover_file: 'big.jpg' })
+  await writeFile(join(dir, 'covers/big.jpg'), Buffer.concat([JPEG, Buffer.alloc(10 * 1024 * 1024)]))
+  const tool = async (_dir, cmd, _src, dest) => { assert.equal(cmd, 'shrink'); await writeFile(dest, JPEG); return {} }
+  let uploaded
+  const backend = async (path, auth, init = {}) => {
+    if (path === '/covers') { uploaded = (await init.body.get('file').arrayBuffer()).byteLength; return {} }
+    return path.startsWith('/books/original/') ? { covers: [] } : { id: 'c' }
+  }
+  const key = (await loadChangbi(dir))[0].key
+  await applyChangbiCover({ key, bookId: '00000000-0000-4000-8000-000000000001', kind: 'original' }, 'Bearer t', { dir, callBackend: backend, tool })
+  assert.equal(uploaded, JPEG.length)
+})
+
+test('applying needs a chosen changbi cover', async () => {
+  const dir = await changbiFixture({ cover_status: '미확인' })
+  const key = (await loadChangbi(dir))[0].key
+  await assert.rejects(applyChangbiCover({ key, bookId: '00000000-0000-4000-8000-000000000001', kind: 'original' }, 'Bearer t', { dir, callBackend: async () => ({}) }), /적용할 표지가 없습니다/)
 })

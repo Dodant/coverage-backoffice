@@ -1,8 +1,15 @@
+import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { copyFile, readFile, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
-import { pathToFileURL } from 'node:url'
+import { extname, join, resolve, sep } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { promisify } from 'node:util'
 
 const backend = (process.env.COVERAGE_BACKEND ?? 'http://localhost:8080').replace(/\/$/, '')
 const port = Number(process.env.COVERAGE_COVER_AGENT_PORT ?? 8766)
+// 창비 보도자료 수집 폴더 (../changbi-press, tools/collect.py가 만든다)
+const changbiDir = resolve(process.env.COVERAGE_CHANGBI_DIR ?? fileURLToPath(new URL('../../changbi-press/', import.meta.url)))
 
 const clean = value => typeof value === 'string' ? value.trim().slice(0, 200) : ''
 const isbnDigits = value => value.replace(/[\s-]/g, '').toUpperCase()
@@ -308,6 +315,116 @@ export async function discover(input = {}, fetcher = fetch, onProgress = () => {
   return { candidates: unique, errors }
 }
 
+// ── 창비 자료실: 수집한 보도자료 표지 검토·선택·적용 ──
+
+const run = promisify(execFile)
+async function changbiTool(dir, ...args) {
+  const { stdout } = await run(join(dir, 'venv/bin/python'), ['-I', join(dir, 'tools/backoffice.py'), ...args], { timeout: 180000, maxBuffer: 1 << 20 })
+  return JSON.parse(stdout)
+}
+const readJson = async (path, fallback) => {
+  try { return JSON.parse(await readFile(path, 'utf8')) } catch (error) { if (error.code === 'ENOENT') return fallback; throw error }
+}
+const candidateId = url => createHash('sha1').update(url).digest('hex').slice(0, 16)
+
+// 이미지 경로는 이 정규식과 폴더 안쪽인지 둘 다 확인한다
+const FILE_KINDS = {
+  covers: ['covers', /^[^/\\.][^/\\]*\.(?:jpe?g|png)$/i],
+  thumbs: ['thumbs', /^[^/\\.][^/\\]*\.jpg$/i],
+  candidates: ['covers/_candidates', /^[0-9a-f]{16}\/t?\d+\.(?:jpg|png)$/],
+}
+export function changbiFile(dir, kind, name) {
+  const [folder, pattern] = FILE_KINDS[kind] ?? []
+  if (!folder || !pattern.test(name)) return null
+  const base = resolve(dir, folder)
+  const path = resolve(base, name)
+  return path.startsWith(base + sep) ? path : null
+}
+
+export async function loadChangbi(dir = changbiDir) {
+  const [books, overrides] = await Promise.all([readJson(join(dir, 'books.json'), null), readJson(join(dir, 'overrides.json'), {})])
+  if (!books) fail(404, '창비 수집 결과(books.json)가 없습니다. changbi-press에서 tools/collect.py를 실행해 주세요.')
+  return books.map(book => ({ ...book, ...overrides[book.url], key: book.url }))
+}
+
+let overridesLock = Promise.resolve()
+function updateOverride(dir, key, change) {
+  // ponytail: 프로세스 하나 안에서만 직렬화한다. 여러 cover-agent가 같은 폴더를 쓰면 파일 잠금이 필요하다.
+  const next = overridesLock.then(async () => {
+    const path = join(dir, 'overrides.json')
+    const overrides = await readJson(path, {})
+    overrides[key] = { ...overrides[key], ...change }
+    await writeFile(path, JSON.stringify(overrides, null, 1))
+  })
+  overridesLock = next.catch(() => {})
+  return next
+}
+async function changbiBook(dir, key) {
+  const book = (await loadChangbi(dir)).find(item => item.key === key)
+  if (!book) fail(404, '창비 자료를 찾을 수 없습니다.')
+  return book
+}
+
+export async function changbiCandidates(input, dir = changbiDir, tool = changbiTool) {
+  const book = await changbiBook(dir, input.key)
+  const id = candidateId(book.url)
+  const items = await tool(dir, 'candidates', book.url, join(dir, 'covers/_candidates', id))
+  return { id, items }
+}
+
+export async function pickChangbiCover(input, dir = changbiDir, tool = changbiTool) {
+  const book = await changbiBook(dir, input.key)
+  if (!['clean', 'banded'].includes(input.ribbon)) fail(400, '띠지 여부를 선택해 주세요.')
+  if (!/^\d+\.(?:jpg|png)$/.test(String(input.file))) fail(400, '이미지 선택이 올바르지 않습니다.')
+  const id = candidateId(book.url)
+  const manifest = await readJson(join(dir, 'covers/_candidates', id, 'manifest.json'), [])
+  const picked = manifest.find(item => item.file === input.file)
+  if (!picked) fail(400, 'zip 이미지 목록을 먼저 불러와 주세요.')
+  const stem = book.cover_file ? book.cover_file.replace(/\.[^.]+$/, '') : `${book.isbn || 'x'}_${id}`
+  const coverFile = stem + extname(input.file)
+  await copyFile(join(dir, 'covers/_candidates', id, input.file), join(dir, 'covers', coverFile))
+  await tool(dir, 'thumb', join(dir, 'covers', coverFile), join(dir, 'thumbs', `${stem}.jpg`))
+  const change = { cover_status: input.ribbon === 'clean' ? 'clean' : '띠지', cover_file: coverFile, cover_source_name: picked.name }
+  await updateOverride(dir, book.key, change)
+  return { ...book, ...change }
+}
+
+export async function applyChangbiCover(input, authorization, { dir = changbiDir, callBackend = backendJson, tool = changbiTool } = {}) {
+  const bookId = clean(input.bookId)
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(bookId) || !['original', 'translated'].includes(input.kind)) fail(400, '도서 선택이 올바르지 않습니다.')
+  const book = await changbiBook(dir, input.key)
+  if (!book.cover_file || !['clean', '띠지'].includes(book.cover_status)) fail(400, '적용할 표지가 없습니다. zip 이미지에서 먼저 골라 주세요.')
+  const image = async () => {
+    let path = join(dir, 'covers', book.cover_file)
+    if ((await stat(path)).size > 10 * 1024 * 1024) { // 백엔드 업로드 한도
+      const shrunk = join(dir, 'covers/_candidates', `upload-${candidateId(book.url)}.jpg`)
+      await tool(dir, 'shrink', path, shrunk)
+      path = shrunk
+    }
+    return imageOf(await readFile(path))
+  }
+  const result = await attachCover({
+    bookId, kind: input.kind, image,
+    // 다시 고른 표지는 새 변형으로 올라가도록 고른 파일 이름을 출처 주소에 넣는다
+    sourceUrl: `${book.url}#${encodeURIComponent(book.cover_source_name ?? book.cover_file)}`,
+    sourceName: '창비 보도자료',
+    label: [book.cover_status === 'clean' ? '띠지 없음' : '띠지 있음', book.imprint || '창비', book.pub_month].filter(Boolean).join(' · '),
+  }, authorization, callBackend)
+  await updateOverride(dir, book.key, { applied: { bookId, kind: input.kind, coverId: result.coverId, at: new Date().toISOString() } })
+  return result
+}
+
+async function sendFile(response, path, immutable) {
+  try {
+    const body = await readFile(path)
+    response.writeHead(200, {
+      'Content-Type': /\.png$/i.test(path) ? 'image/png' : 'image/jpeg',
+      'Cache-Control': immutable ? 'public, max-age=86400' : 'no-cache',
+    })
+    response.end(body)
+  } catch { send(response, 404, { message: 'Not found' }) }
+}
+
 async function readBody(request) {
   const chunks = []
   let size = 0
@@ -333,10 +450,18 @@ function send(response, status, body) {
 export function startServer() {
   return createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost')
-    if (request.method !== 'POST' || !['/books/search', '/discover', '/apply'].includes(url.pathname)) return send(response, 404, { message: 'Not found' })
     const authorization = request.headers.authorization ?? ''
     try {
-      if (url.pathname === '/apply') {
+      if (request.method === 'GET') {
+        if (url.pathname === '/changbi/books') return send(response, 200, await loadChangbi())
+        const file = url.pathname.match(/^\/changbi\/(covers|thumbs|candidates)\/(.+)$/)
+        const path = file && changbiFile(changbiDir, file[1], decodeURIComponent(file[2]))
+        if (path) return sendFile(response, path, file[1] === 'candidates')
+        return send(response, 404, { message: 'Not found' })
+      }
+      const routes = ['/books/search', '/discover', '/apply', '/changbi/candidates', '/changbi/pick', '/changbi/apply']
+      if (request.method !== 'POST' || !routes.includes(url.pathname)) return send(response, 404, { message: 'Not found' })
+      if (url.pathname === '/apply' || url.pathname === '/changbi/apply') {
         if (!/^Bearer \S+$/.test(authorization)) return send(response, 401, { message: '표지 등록에는 관리자 인증이 필요합니다.' })
         const check = await fetch(`${backend}/api/users/me`, { headers: { Authorization: authorization }, signal: AbortSignal.timeout(5000) })
         if (!check.ok) return send(response, 401, { message: '관리자 인증에 실패했습니다.' })
@@ -345,6 +470,9 @@ export function startServer() {
       }
       const input = await readBody(request)
       if (url.pathname === '/apply') return send(response, 200, await applyCover(input, authorization))
+      if (url.pathname === '/changbi/candidates') return send(response, 200, await changbiCandidates(input))
+      if (url.pathname === '/changbi/pick') return send(response, 200, await pickChangbiCover(input))
+      if (url.pathname === '/changbi/apply') return send(response, 200, await applyChangbiCover(input, authorization))
       if (url.pathname === '/books/search') return send(response, 200, await searchBooks(input))
       if (url.searchParams.get('stream') === '1') {
         response.writeHead(200, {
