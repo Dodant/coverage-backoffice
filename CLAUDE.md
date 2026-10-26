@@ -34,7 +34,7 @@ The SPA talks to three backends, all same-origin via the Vite proxy (`vite.confi
 
 ### Cover agent (`server/cover-agent.mjs`)
 
-Plain `node:http`, no dependencies, bound to 127.0.0.1. POST-only endpoints:
+Plain `node:http`, no dependencies, bound to 127.0.0.1. `localRequest` rejects non-localhost `Host` (DNS rebinding) and non-JSON POSTs (cross-site requests without preflight), so callers must send `Content-Type: application/json`. Endpoints:
 - `/books/search` — searches Kakao (only when `KAKAO_REST_API_KEY` is set; listed first for Korean books), Open Library and Google Books; a failing source is reported in `errors` while the others' results still return. Kakao thumbnails (`search1.kakaocdn.net`) are display-only — not in the `coverUrl` allowlist, so they can't be applied as covers.
 - `/discover` — finds cover candidates for a selected book; `?stream=1` streams NDJSON `progress` events then a `result` (or `error`) event.
 - `/apply` — verifies the token via backend `/api/users/me` (role must be `ADMIN`), downloads the image (only HTTPS from `covers.openlibrary.org` / `books.google.com` / `books.googleusercontent.com`, manual redirect re-validation, ≤10MB, JPEG/PNG magic-byte check), then uploads to the backend as a cover variant and sets it as primary.

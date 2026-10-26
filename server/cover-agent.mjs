@@ -447,10 +447,18 @@ function send(response, status, body) {
   response.end(JSON.stringify(body))
 }
 
+// 다른 사이트가 브라우저로 이 로컬 서비스를 부르지 못하게 한다.
+// Host가 로컬이 아니면 DNS 재바인딩, POST가 JSON이 아니면 사전 확인 없는 교차 출처 요청이다.
+export function localRequest({ method, headers }) {
+  if (!/^(?:localhost|127\.0\.0\.1)(?::\d+)?$/.test(headers.host ?? '')) return false
+  return method !== 'POST' || /^application\/json\b/i.test(headers['content-type'] ?? '')
+}
+
 export function startServer() {
   return createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost')
     const authorization = request.headers.authorization ?? ''
+    if (!localRequest(request)) return send(response, 403, { message: '허용되지 않은 요청입니다.' })
     try {
       if (request.method === 'GET') {
         if (url.pathname === '/changbi/books') return send(response, 200, await loadChangbi())

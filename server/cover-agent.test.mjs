@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { applyChangbiCover, applyCover, changbiFile, discover, loadChangbi, pickChangbiCover, searchBooks } from './cover-agent.mjs'
+import { applyChangbiCover, applyCover, changbiFile, discover, loadChangbi, localRequest, pickChangbiCover, searchBooks } from './cover-agent.mjs'
 
 test('book search returns selectable bibliographic results before cover discovery', async () => {
   const fetcher = async url => String(url).includes('openlibrary.org')
@@ -241,4 +241,16 @@ test('applying needs a chosen changbi cover', async () => {
   const dir = await changbiFixture({ cover_status: '미확인' })
   const key = (await loadChangbi(dir))[0].key
   await assert.rejects(applyChangbiCover({ key, bookId: '00000000-0000-4000-8000-000000000001', kind: 'original' }, 'Bearer t', { dir, callBackend: async () => ({}) }), /적용할 표지가 없습니다/)
+})
+
+test('only local JSON requests reach the agent', () => {
+  const json = { 'content-type': 'application/json' }
+  assert.equal(localRequest({ method: 'POST', headers: { host: '127.0.0.1:8766', ...json } }), true)
+  assert.equal(localRequest({ method: 'POST', headers: { host: 'localhost:8766', 'content-type': 'application/json; charset=utf-8' } }), true)
+  assert.equal(localRequest({ method: 'GET', headers: { host: 'localhost:8766' } }), true)
+  // 다른 사이트의 form/text 요청(사전 확인 없음)과 DNS 재바인딩
+  assert.equal(localRequest({ method: 'POST', headers: { host: '127.0.0.1:8766', 'content-type': 'text/plain' } }), false)
+  assert.equal(localRequest({ method: 'POST', headers: { host: '127.0.0.1:8766' } }), false)
+  assert.equal(localRequest({ method: 'GET', headers: { host: 'evil.example:8766' } }), false)
+  assert.equal(localRequest({ method: 'POST', headers: { host: 'localhost.evil.example', ...json } }), false)
 })
