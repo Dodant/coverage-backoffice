@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { api, CHANGBI_DRAG, coverAgent, safeUrl, session } from '../api'
 import { Pager, type Page } from '../ui'
 
@@ -63,6 +63,8 @@ export default function Changbi() {
   const [selectedKey, setSelectedKey] = useState('')
   const [openSeries, setOpenSeries] = useState('')
   const [versions, setVersions] = useState<Record<string, number>>({})
+  const [cardSize, setCardSize] = useState(() => { try { return Number(localStorage.getItem('changbi-card-size')) || 124 } catch { return 124 } })
+  const resize = (size: number) => { setCardSize(size); try { localStorage.setItem('changbi-card-size', String(size)) } catch { /* 저장 못 해도 지금 화면엔 적용 */ } }
 
   useEffect(() => {
     fetch('/cover-agent/changbi/books').then(async response => {
@@ -163,13 +165,16 @@ export default function Changbi() {
           <option value="">적용 여부 전체</option><option value="yes">백엔드 적용됨</option><option value="no">미적용</option>
         </select>
         <span className="muted small">{filtered.length}권</span>
+        <label className="muted small row">카드 크기
+          <input type="range" min={80} max={260} step={4} value={cardSize} onChange={e => resize(Number(e.target.value))} />
+        </label>
       </div>
       {openSeries && <div className="row" style={{ marginBottom: 12 }}>
         <button onClick={() => openGroup('')}>← 목록으로</button>
         <strong>{opened.length ? seriesName(opened) : openSeries}</strong>
         <span className="muted small">{opened.length}권</span>
       </div>}
-      <div className={'changbi-layout' + (selected ? ' with-detail' : '')}>
+      <div className={'changbi-layout' + (selected ? ' with-detail' : '')} style={{ '--card': `${cardSize}px` } as CSSProperties}>
         <div>
           {openSeries ? grid(opened.map(book => ({ key: book.key, books: [book] })), 'open')
             : sections.filter(section => section.count).map(section => <details key={section.key} className="changbi-section" open>

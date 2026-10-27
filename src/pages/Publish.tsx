@@ -65,6 +65,7 @@ function Editor({ book, onSaved, onPublished }: { book: Draft; onSaved: (book: D
   })
   const publish = () => work('공개하는 중…', async () => {
     await api('/admin/moderation/content/restore', { method: 'POST', body: { targetType: 'ORIGINAL_BOOK', targetId: book.id } })
+    window.dispatchEvent(new Event('publish:changed')) // 사이드바 펜딩 수
     onPublished()
   })
 

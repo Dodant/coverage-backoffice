@@ -27,7 +27,16 @@ button:disabled { opacity: .5; cursor: default; }
 .side .brand { font-weight: 700; margin-bottom: 12px; }
 .side a { color: var(--text); padding: 6px 10px; border-radius: 6px; }
 .side a.active { background: var(--panel); border: 1px solid var(--line); }
-.side a.drop-over { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.side-section { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
+.side-section:first-of-type { margin-top: 0; }
+.side-title { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; padding: 0 10px 2px; }
+.side a { display: flex; align-items: center; gap: 6px; }
+.side a .count { margin-left: auto; background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; padding: 0 7px; border-radius: 999px; line-height: 18px; }
+.side a.drop-target { outline: 1px dashed var(--muted); outline-offset: -1px; }
+.side a.drop-over { outline: 2px dashed var(--accent); outline-offset: -2px; background: var(--panel); }
+.toast { position: fixed; right: 20px; bottom: 20px; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--ok); border-radius: 8px; padding: 10px 12px; font-size: 13px; box-shadow: 0 4px 16px rgba(0, 0, 0, .12); display: flex; gap: 10px; align-items: center; max-width: 360px; }
+.toast.error { border-left-color: var(--fail); }
+.toast button { padding: 0 6px; border: 0; background: none; font-size: 16px; color: var(--muted); }
 .publish-form { display: grid; gap: 8px; margin-top: 12px; }
 .publish-form label { display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
 .side .me { margin-top: auto; font-size: 12px; color: var(--muted); }
@@ -55,6 +64,7 @@ th { color: var(--muted); font-weight: 600; }
 @media (max-width: 760px) {
   .layout { grid-template-columns: minmax(0, 1fr); }
   .side { position: static; height: auto; flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }
+  .side-section { flex-direction: row; flex-wrap: wrap; align-items: center; margin-top: 0; }
   .side .brand { width: 100%; margin: 0; }
   .side .me { margin: 0; width: 100%; }
   .page { padding: 16px; }
@@ -159,7 +169,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
 /* 창비 자료실 */
 .changbi-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
 .changbi-layout.with-detail { grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); }
-.changbi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 10px; }
+.changbi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--card, 124px), 1fr)); gap: 10px; }
 .changbi-item { display: flex; flex-direction: column; align-items: start; gap: 4px; padding: 8px; text-align: left; min-width: 0; }
 .changbi-item.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .changbi-item img, .changbi-item .nocover { width: 100%; aspect-ratio: 2 / 3; object-fit: contain; background: var(--bg); border: 1px solid var(--line); border-radius: 3px; }
