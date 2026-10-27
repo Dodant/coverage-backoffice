@@ -73,7 +73,7 @@ function DetailPage({ id }: { id: string }) {
       <div><div className="row"><span className="badge">{data.kind === 'ORIGINAL' ? '원서' : '번역서'}</span><span className="badge">{STATUS_LABELS[book.status]}</span></div>
         <h1>{book.title}</h1><p className="muted">{[book.author?.name, book.publisher?.name, langName(book.languageCode), book.year, book.edition].filter(Boolean).join(' · ')}</p>
         <IssueBadges issues={data.issues} />
-        <div className="row book-detail-links">{originalId && !immutable && <><Link to={`/covers/${originalId}`}>디자인 묶음 관리</Link><Link to={`/cover-discovery?originalId=${originalId}&bookId=${book.id}`}>온라인 커버 찾기</Link></>}{book.status === 'DRAFT' && data.kind === 'ORIGINAL' && <Link to={`/publish?id=${book.id}`}>공개 검토</Link>}</div>
+        <div className="row book-detail-links">{originalId && !immutable && <><Link to={`/covers/${originalId}`}>디자인 묶음 관리</Link><Link to={`/cover-discovery?originalId=${originalId}&bookId=${book.id}`}>온라인 커버 찾기</Link><Link to={`/image-duplicates?bookId=${book.id}`}>동일·유사 이미지 확인</Link></>}{book.status === 'DRAFT' && data.kind === 'ORIGINAL' && <Link to={`/publish?id=${book.id}`}>공개 검토</Link>}</div>
       </div>
     </header>
     {immutable && <p className="note">삭제된 도서는 열람만 할 수 있습니다.</p>}
