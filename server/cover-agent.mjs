@@ -393,10 +393,8 @@ export async function pickChangbiCover(input, dir = changbiDir) {
   return { ...book, ...change }
 }
 
-export async function applyChangbiCover(input, authorization, { dir = changbiDir, callBackend = backendJson, tool = changbiTool } = {}) {
-  const bookId = clean(input.bookId)
-  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(bookId) || !['original', 'translated'].includes(input.kind)) fail(400, '도서 선택이 올바르지 않습니다.')
-  const book = await changbiBook(dir, input.key)
+// 고른 표지 파일과 출처 정보. 백엔드 업로드 한도(10MB)를 넘으면 줄인 사본을 올린다
+async function changbiCover(dir, book, tool) {
   if (!book.cover_file || !['clean', '띠지'].includes(book.cover_status)) fail(400, '적용할 표지가 없습니다. zip 이미지에서 먼저 골라 주세요.')
   const path = join(dir, 'covers', book.cover_file)
   const bytes = await readFile(path).catch(() => fail(404, '표지 파일이 없습니다. zip 이미지에서 다시 골라 주세요.'))
@@ -407,15 +405,70 @@ export async function applyChangbiCover(input, authorization, { dir = changbiDir
     return imageOf(await readFile(shrunk))
   }
   const ribbon = book.cover_status === 'clean' ? 'clean' : 'banded'
-  const result = await attachCover({
-    bookId, kind: input.kind, image,
+  return {
+    image,
     // 다른 이미지나 띠지 판정을 바꿔 다시 적용하면 새 변형으로 올라가도록 내용 해시와 띠지 상태를 넣는다
     sourceUrl: `${book.url}#${createHash('sha1').update(bytes).digest('hex').slice(0, 16)}-${ribbon}`,
     sourceName: '창비 보도자료',
     label: [ribbon === 'clean' ? '띠지 없음' : '띠지 있음', book.imprint || '창비', book.pub_month].filter(Boolean).join(' · '),
-  }, authorization, callBackend)
+  }
+}
+
+export async function applyChangbiCover(input, authorization, { dir = changbiDir, callBackend = backendJson, tool = changbiTool } = {}) {
+  const bookId = clean(input.bookId)
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(bookId) || !['original', 'translated'].includes(input.kind)) fail(400, '도서 선택이 올바르지 않습니다.')
+  const book = await changbiBook(dir, input.key)
+  const cover = await changbiCover(dir, book, tool)
+  const result = await attachCover({ bookId, kind: input.kind, ...cover }, authorization, callBackend)
   await updateOverride(dir, book.key, { applied: { bookId, kind: input.kind, coverId: result.coverId, at: new Date().toISOString() } })
   return result
+}
+
+// '송진권(글), 김윤이(그림)' → '송진권'. 역할어·'외'가 섞여 사람 이름이 아닐 것 같으면 비워 두고 엔티티 정리에 맡긴다
+// (resolveAuthor는 모르는 이름을 그대로 새 Author로 만든다)
+export function firstAuthor(authors) {
+  const name = (authors ?? '').split(/[,·]/)[0].replace(/\([^)]*\)/g, '').trim()
+  return name && !/(^|\s)(글|그림|사진|외|엮음|편|옮김|역|지음)(\s|$)/.test(name) ? name : undefined
+}
+
+const registering = new Set() // 응답 전에 같은 카드를 또 놓아도 한 번만 등록한다
+
+// 창비 책을 원서로 새로 등록한다. DRAFT라 백오피스 '퍼블리시'에서 고쳐 공개하기 전까지 사용자에게 안 보인다
+export async function registerChangbiBook(input, authorization, { dir = changbiDir, callBackend = backendJson, tool = changbiTool } = {}) {
+  const book = await changbiBook(dir, input.key)
+  if (book.applied) fail(409, '이미 백엔드에 등록된 책입니다.')
+  if (registering.has(book.key)) fail(409, '등록 중인 책입니다.')
+  // ponytail: 번역서는 원서(외국어판)에 붙여야 해서 아직 못 넣는다. 원서 검색·연결 단계를 붙이면 translated로 등록
+  if (book.original_title || book.translators) fail(400, '번역서는 원서를 먼저 등록해야 해서 아직 퍼블리시로 보낼 수 없습니다.')
+  registering.add(book.key)
+  try {
+    const { image, sourceUrl, sourceName } = await changbiCover(dir, book, tool)
+    const { bytes, mime } = await image()
+    const form = new FormData()
+    form.append('file', new Blob([bytes], { type: mime }), mime === 'image/png' ? 'cover.png' : 'cover.jpg')
+    // ponytail: 표지를 먼저 올리고 책 생성이 실패하면 파일이 남는다(지우는 API 없음). 생성 실패는 ISBN 중복 정도라 드물다
+    const upload = await callBackend('/covers', authorization, { method: 'POST', body: form })
+    const created = await callBackend('/books/original', authorization, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: book.title, languageCode: 'ko', countryCode: 'KR', status: 'DRAFT',
+        year: Number(book.pub_month?.slice(0, 4)) || undefined,
+        isbn: book.isbn && !book.isbn_shared ? book.isbn : undefined, // 세트 ISBN은 한 권의 것이 아니다
+        authorName: firstAuthor(book.authors),
+        publisherName: book.imprint || '창비',
+        seriesName: book.kind === '단권' ? undefined : book.series, seriesNumber: book.kind === '단권' ? undefined : book.volume?.slice(0, 20),
+        frontCover: {
+          imageUrl: upload.originalUrl, thumbnailUrl: upload.thumbnailUrl, originalFileName: upload.originalFileName,
+          width: upload.width, height: upload.height, fileSize: upload.fileSize, imageSource: 'LINK', sourceUrl, sourceName,
+        },
+      }),
+    })
+    const applied = { bookId: created.id, kind: 'original', coverId: created.frontCover?.id, at: new Date().toISOString() }
+    await updateOverride(dir, book.key, { applied })
+    return { bookId: created.id, title: created.title, applied }
+  } finally {
+    registering.delete(book.key)
+  }
 }
 
 async function sendFile(response, path, immutable) {
@@ -473,9 +526,9 @@ export function startServer() {
         if (path) return sendFile(response, path, file[1] === 'candidates')
         return send(response, 404, { message: 'Not found' })
       }
-      const routes = ['/books/search', '/discover', '/apply', '/changbi/candidates', '/changbi/pick', '/changbi/apply']
+      const routes = ['/books/search', '/discover', '/apply', '/changbi/candidates', '/changbi/pick', '/changbi/apply', '/changbi/register']
       if (request.method !== 'POST' || !routes.includes(url.pathname)) return send(response, 404, { message: 'Not found' })
-      if (url.pathname === '/apply' || url.pathname === '/changbi/apply') {
+      if (['/apply', '/changbi/apply', '/changbi/register'].includes(url.pathname)) {
         if (!/^Bearer \S+$/.test(authorization)) return send(response, 401, { message: '표지 등록에는 관리자 인증이 필요합니다.' })
         const check = await fetch(`${backend}/api/users/me`, { headers: { Authorization: authorization }, signal: AbortSignal.timeout(5000) })
         if (!check.ok) return send(response, 401, { message: '관리자 인증에 실패했습니다.' })
@@ -487,6 +540,7 @@ export function startServer() {
       if (url.pathname === '/changbi/candidates') return send(response, 200, await changbiCandidates(input))
       if (url.pathname === '/changbi/pick') return send(response, 200, await pickChangbiCover(input))
       if (url.pathname === '/changbi/apply') return send(response, 200, await applyChangbiCover(input, authorization))
+      if (url.pathname === '/changbi/register') return send(response, 201, await registerChangbiBook(input, authorization))
       if (url.pathname === '/books/search') return send(response, 200, await searchBooks(input))
       if (url.searchParams.get('stream') === '1') {
         response.writeHead(200, {
