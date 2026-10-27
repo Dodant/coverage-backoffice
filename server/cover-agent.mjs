@@ -424,35 +424,51 @@ export async function applyChangbiCover(input, authorization, { dir = changbiDir
   return result
 }
 
+// '송진권(글), 김윤이(그림)' → '송진권'. 역할어·'외'가 섞여 사람 이름이 아닐 것 같으면 비워 두고 엔티티 정리에 맡긴다
+// (resolveAuthor는 모르는 이름을 그대로 새 Author로 만든다)
+export function firstAuthor(authors) {
+  const name = (authors ?? '').split(/[,·]/)[0].replace(/\([^)]*\)/g, '').trim()
+  return name && !/(^|\s)(글|그림|사진|외|엮음|편|옮김|역|지음)(\s|$)/.test(name) ? name : undefined
+}
+
+const registering = new Set() // 응답 전에 같은 카드를 또 놓아도 한 번만 등록한다
+
 // 창비 책을 원서로 새로 등록한다. DRAFT라 백오피스 '퍼블리시'에서 고쳐 공개하기 전까지 사용자에게 안 보인다
 export async function registerChangbiBook(input, authorization, { dir = changbiDir, callBackend = backendJson, tool = changbiTool } = {}) {
   const book = await changbiBook(dir, input.key)
   if (book.applied) fail(409, '이미 백엔드에 등록된 책입니다.')
+  if (registering.has(book.key)) fail(409, '등록 중인 책입니다.')
   // ponytail: 번역서는 원서(외국어판)에 붙여야 해서 아직 못 넣는다. 원서 검색·연결 단계를 붙이면 translated로 등록
   if (book.original_title || book.translators) fail(400, '번역서는 원서를 먼저 등록해야 해서 아직 퍼블리시로 보낼 수 없습니다.')
-  const { image, sourceUrl, sourceName } = await changbiCover(dir, book, tool)
-  const { bytes, mime } = await image()
-  const form = new FormData()
-  form.append('file', new Blob([bytes], { type: mime }), mime === 'image/png' ? 'cover.png' : 'cover.jpg')
-  const upload = await callBackend('/covers', authorization, { method: 'POST', body: form })
-  const created = await callBackend('/books/original', authorization, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      title: book.title, languageCode: 'ko', countryCode: 'KR', status: 'DRAFT',
-      year: Number(book.pub_month?.slice(0, 4)) || undefined, isbn: book.isbn || undefined,
-      // '송진권(글), 김윤이(그림)' → 첫 저자 이름만. 나머지는 퍼블리시에서 고친다
-      authorName: book.authors?.split(/[,·]/)[0].replace(/\([^)]*\)/g, '').trim() || undefined,
-      publisherName: book.imprint || '창비',
-      seriesName: book.kind === '단권' ? undefined : book.series, seriesNumber: book.kind === '단권' ? undefined : book.volume?.slice(0, 20),
-      frontCover: {
-        imageUrl: upload.originalUrl, thumbnailUrl: upload.thumbnailUrl, originalFileName: upload.originalFileName,
-        width: upload.width, height: upload.height, fileSize: upload.fileSize, imageSource: 'LINK', sourceUrl, sourceName,
-      },
-    }),
-  })
-  const applied = { bookId: created.id, kind: 'original', coverId: created.frontCover?.id, at: new Date().toISOString() }
-  await updateOverride(dir, book.key, { applied })
-  return { bookId: created.id, title: created.title, applied }
+  registering.add(book.key)
+  try {
+    const { image, sourceUrl, sourceName } = await changbiCover(dir, book, tool)
+    const { bytes, mime } = await image()
+    const form = new FormData()
+    form.append('file', new Blob([bytes], { type: mime }), mime === 'image/png' ? 'cover.png' : 'cover.jpg')
+    // ponytail: 표지를 먼저 올리고 책 생성이 실패하면 파일이 남는다(지우는 API 없음). 생성 실패는 ISBN 중복 정도라 드물다
+    const upload = await callBackend('/covers', authorization, { method: 'POST', body: form })
+    const created = await callBackend('/books/original', authorization, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: book.title, languageCode: 'ko', countryCode: 'KR', status: 'DRAFT',
+        year: Number(book.pub_month?.slice(0, 4)) || undefined,
+        isbn: book.isbn && !book.isbn_shared ? book.isbn : undefined, // 세트 ISBN은 한 권의 것이 아니다
+        authorName: firstAuthor(book.authors),
+        publisherName: book.imprint || '창비',
+        seriesName: book.kind === '단권' ? undefined : book.series, seriesNumber: book.kind === '단권' ? undefined : book.volume?.slice(0, 20),
+        frontCover: {
+          imageUrl: upload.originalUrl, thumbnailUrl: upload.thumbnailUrl, originalFileName: upload.originalFileName,
+          width: upload.width, height: upload.height, fileSize: upload.fileSize, imageSource: 'LINK', sourceUrl, sourceName,
+        },
+      }),
+    })
+    const applied = { bookId: created.id, kind: 'original', coverId: created.frontCover?.id, at: new Date().toISOString() }
+    await updateOverride(dir, book.key, { applied })
+    return { bookId: created.id, title: created.title, applied }
+  } finally {
+    registering.delete(book.key)
+  }
 }
 
 async function sendFile(response, path, immutable) {

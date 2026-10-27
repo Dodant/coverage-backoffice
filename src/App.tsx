@@ -37,6 +37,7 @@ function Shell() {
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null)
   const [dragging, setDragging] = useState(false)
   const [over, setOver] = useState(false)
+  const [dropping, setDropping] = useState(false)
   const pending = usePendingCount()
 
   useEffect(() => {
@@ -57,7 +58,9 @@ function Shell() {
   const drop = async (e: DragEvent) => {
     e.preventDefault()
     setOver(false)
+    if (dropping) return // 응답 전에 또 놓으면 무시(서버도 같은 책은 409)
     const key = e.dataTransfer.getData(CHANGBI_DRAG)
+    setDropping(true)
     setToast({ text: '펜딩으로 등록하는 중…' })
     try {
       const result = await coverAgent<{ title: string; applied: unknown }>('/changbi/register', { key }, { token: session()?.token })
@@ -65,6 +68,8 @@ function Shell() {
       setToast({ text: `'${result.title}' 펜딩으로 등록했습니다.` })
     } catch (error) {
       setToast({ text: error instanceof Error ? error.message : String(error), error: true })
+    } finally {
+      setDropping(false)
     }
   }
 

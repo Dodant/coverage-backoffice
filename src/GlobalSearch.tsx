@@ -1,42 +1,41 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, safeUrl } from './api'
+import { api, ApiError, safeUrl, type SearchItem } from './api'
+import { loadChangbiBooks, thumbUrl } from './changbi'
 import type { Page } from './ui'
 
 // 사이드바 전역 검색('/' 키). 등록된 책·펜딩·창비 자료실을 한 번에 찾고, 고르면 그 책이 선택된 화면으로 간다
 type Hit = { key: string; title: string; sub: string; thumb?: string; to: string | (() => Promise<string>) }
 type Group = { label: string; hits: Hit[]; note?: string }
-type SearchItem = { id: string; type: string; title: string; author: string; publisher: string | null; year: number | null; thumbnailUrl: string | null }
 type Draft = { id: string; title: string; isbn: string | null; author: { name: string } | null; publisher: { name: string } | null; frontCover: { thumbnailUrl: string | null } | null }
-type ChangbiBook = { key: string; title: string; original_title?: string; authors?: string; translators?: string; isbn?: string; series?: string; imprint: string; pub_month?: string; cover_file?: string; cover_status: string }
+type Drafts = { list: Draft[]; note?: string }
 
 const LIMIT = 8
 const has = (q: string, ...values: (string | null | undefined)[]) => values.some(value => value?.toLowerCase().includes(q))
-let changbiCache: Promise<ChangbiBook[]> | null = null // 1.9MB라 세션에 한 번만 받는다
-const changbiBooks = () => changbiCache ??= fetch('/cover-agent/changbi/books').then(async response => {
-  if (!response.ok) throw new Error('창비 자료를 불러올 수 없습니다.')
-  return response.json() as Promise<ChangbiBook[]>
-}).catch(error => { changbiCache = null; throw error })
 
-async function search(q: string, drafts: Promise<Draft[]>): Promise<Group[]> {
+// 펜딩 목록은 관리자만 볼 수 있다. 못 보면 '없음'이 아니라 이유를 보여 준다
+const loadDrafts = (): Promise<Drafts> => api<Page<Draft>>('/admin/books?status=DRAFT&size=200').then(page => ({ list: page.content }))
+  .catch(error => ({ list: [], note: error instanceof ApiError && (error.status === 401 || error.status === 403) ? '관리자 인증이 필요합니다.' : '펜딩 목록을 불러올 수 없습니다.' }))
+
+async function search(q: string, drafts: Promise<Drafts>): Promise<Group[]> {
   const registered = api<{ items: SearchItem[] }>(`/search?${new URLSearchParams({ query: q, size: String(LIMIT) })}`, { signal: AbortSignal.timeout(5000) })
-    .then((data): Group => ({ label: '등록된 책', hits: data.items.map(item => ({
-      key: item.id, title: item.title, thumb: safeUrl(item.thumbnailUrl),
-      sub: [item.type === 'ORIGINAL' ? '원서' : '번역서', item.author, item.publisher, item.year].filter(Boolean).join(' · '),
-      // 표지 묶기는 원서 단위라 번역서는 원서 id를 찾아서 간다
-      to: item.type === 'ORIGINAL' ? `/covers/${item.id.replace(/^original_/, '')}`
-        : async () => `/covers/${(await api<{ originalBookId: string }>(`/books/translated/${item.id.replace(/^translated_/, '')}`)).originalBookId}`,
-    })) }))
+    .then((data): Group => ({ label: '등록된 책', hits: data.items
+      .filter(item => item.type === 'ORIGINAL' || item.type === 'TRANSLATED') // 리디자인 문서도 섞여 온다
+      .map(item => ({
+        key: item.id, title: item.title, thumb: safeUrl(item.thumbnailUrl),
+        sub: [item.type === 'ORIGINAL' ? '원서' : '번역서', item.author, item.publisher, item.year].filter(Boolean).join(' · '),
+        // 표지 묶기는 원서 단위라 번역서는 원서 id를 찾아서 간다
+        to: item.type === 'ORIGINAL' ? `/covers/${item.id.replace(/^original_/, '')}`
+          : async () => `/covers/${(await api<{ originalBookId: string }>(`/books/translated/${item.id.replace(/^translated_/, '')}`)).originalBookId}`,
+      })) }))
     .catch((): Group => ({ label: '등록된 책', hits: [], note: '검색 서버에 연결할 수 없습니다.' }))
-  const pending = drafts.then((list): Group => ({ label: '펜딩', hits: list
+  const pending = drafts.then((drafts): Group => ({ label: '펜딩', note: drafts.note, hits: drafts.list
     .filter(book => has(q, book.title, book.isbn, book.author?.name)).slice(0, LIMIT)
     .map(book => ({ key: book.id, title: book.title, thumb: safeUrl(book.frontCover?.thumbnailUrl),
       sub: [book.author?.name, book.publisher?.name].filter(Boolean).join(' · '), to: `/publish?id=${book.id}` })) }))
-    .catch((): Group => ({ label: '펜딩', hits: [] })) // 관리자 토큰이 없으면 못 본다
-  const changbi = changbiBooks().then((list): Group => ({ label: '창비 자료실', hits: list
+  const changbi = loadChangbiBooks().then((list): Group => ({ label: '창비 자료실', hits: list
     .filter(book => has(q, book.title, book.original_title, book.authors, book.translators, book.isbn, book.series)).slice(0, LIMIT)
-    .map(book => ({ key: book.key, title: book.title,
-      thumb: book.cover_file && ['clean', '띠지'].includes(book.cover_status) ? `/cover-agent/changbi/thumbs/${encodeURIComponent(book.cover_file.replace(/\.[^.]+$/, ''))}.jpg` : '',
+    .map(book => ({ key: book.key, title: book.title, thumb: thumbUrl(book),
       sub: [book.imprint, book.authors, book.pub_month].filter(Boolean).join(' · '), to: `/publishers/changbi?key=${encodeURIComponent(book.key)}` })) }))
     .catch((error): Group => ({ label: '창비 자료실', hits: [], note: error instanceof Error ? error.message : String(error) }))
   return Promise.all([registered, pending, changbi])
@@ -50,7 +49,7 @@ export default function GlobalSearch() {
   const [cursor, setCursor] = useState(0)
   const [busy, setBusy] = useState(false)
   const input = useRef<HTMLInputElement>(null)
-  const drafts = useRef<Promise<Draft[]> | null>(null)
+  const drafts = useRef<Promise<Drafts> | null>(null)
   const requestId = useRef(0)
 
   useEffect(() => {
@@ -67,14 +66,14 @@ export default function GlobalSearch() {
     if (!open) return
     input.current?.focus()
     input.current?.select()
-    drafts.current = api<Page<Draft>>('/admin/books?status=DRAFT&size=200').then(page => page.content) // 열 때 한 번
+    drafts.current = loadDrafts() // 열 때 한 번
   }, [open])
   useEffect(() => {
     const term = q.trim().toLowerCase()
     if (!open || !term) { setGroups(null); return }
     const id = ++requestId.current
     setBusy(true)
-    const timer = setTimeout(() => search(term, drafts.current ?? Promise.resolve([])).then(result => {
+    const timer = setTimeout(() => search(term, drafts.current ?? loadDrafts()).then(result => {
       if (id !== requestId.current) return
       setGroups(result)
       setCursor(0)
@@ -91,7 +90,7 @@ export default function GlobalSearch() {
     setOpen(false)
   }
   const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setCursor(c => Math.min(c + 1, hits.length - 1)) }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setCursor(c => Math.min(c + 1, Math.max(0, hits.length - 1))) }
     if (e.key === 'ArrowUp') { e.preventDefault(); setCursor(c => Math.max(c - 1, 0)) }
     if (e.key === 'Enter' && hits[cursor]) { e.preventDefault(); void go(hits[cursor]) }
   }

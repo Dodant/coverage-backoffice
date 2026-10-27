@@ -28,7 +28,7 @@ button:disabled { opacity: .5; cursor: default; }
 .side a { color: var(--text); padding: 6px 10px; border-radius: 6px; }
 .side a.active { background: var(--panel); border: 1px solid var(--line); }
 .side-section { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
-.side-section:first-of-type { margin-top: 0; }
+.side-search + .side-section { margin-top: 0; }
 .side-title { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; padding: 0 10px 2px; }
 .side a { display: flex; align-items: center; gap: 6px; }
 .side a .count { margin-left: auto; background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; padding: 0 7px; border-radius: 999px; line-height: 18px; }

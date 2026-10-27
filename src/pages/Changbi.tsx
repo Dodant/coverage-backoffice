@@ -1,20 +1,12 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { api, CHANGBI_DRAG, coverAgent, safeUrl, session } from '../api'
+import { api, CHANGBI_DRAG, coverAgent, safeUrl, session, type SearchItem } from '../api'
+import { loadChangbiBooks, patchChangbiBook, thumbUrl, translated, usable, type ChangbiBook } from '../changbi'
 import { Pager, type Page } from '../ui'
+import { useWork } from '../useWork'
 
-// 창비 자료실 보도자료에서 수집한 책(../changbi-press, cover-agent가 제공)
-type ChangbiBook = {
-  key: string; url: string; title: string; list_title: string; imprint: string
-  original_title?: string; authors?: string; translators?: string; pub_month?: string; pub_month_from_upload?: boolean
-  format?: string; isbn?: string; pages?: number; price?: number
-  kind: '단권' | '연작' | '총서' | '세트' | '잡지'; series?: string; volume?: string
-  cover_status: 'clean' | '띠지' | '미확인' | '여러권' | '오류'; cover_file?: string; cover_source_name?: string
-  images: string[]; isbn_shared?: boolean; error?: string
-  applied?: { bookId: string; kind: string; coverId: string; at: string }
-}
+// 창비 자료실 보도자료에서 수집한 책(../changbi-press, cover-agent가 제공). 데이터·공통 판정은 ../changbi.ts
 type Candidate = { name: string; file: string; thumb: string; bytes: number }
-type SearchItem = { id: string; type: string; title: string; author: string; publisher: string | null; year: number | null; thumbnailUrl: string | null }
 
 const TABS = [['all', '전체'], ['translated', '번역서'], ['review', '확인 필요']] as const
 // 한 화면에 위아래로 나눠 보여 주는 묶음. 제목을 눌러 접는다
@@ -24,8 +16,6 @@ const SECTIONS = [
   ['magazine', '잡지', (book: ChangbiBook) => book.kind === '잡지'],
 ] as const
 const STATUS: Record<ChangbiBook['cover_status'], string> = { clean: '띠지 없음', 띠지: '띠지 있음', 미확인: '표지 미확인', 여러권: '여러 권', 오류: '받기 실패' }
-const translated = (book: ChangbiBook) => Boolean(book.original_title || book.translators)
-const usable = (book: ChangbiBook) => book.cover_status === 'clean' || book.cover_status === '띠지'
 const needsReview = (book: ChangbiBook) => !usable(book) || !book.isbn || Boolean(book.isbn_shared)
 const SIZE = 60
 // 같은 시리즈의 연작·총서·세트·잡지를 한 카드로 묶는 키. 표기 흔들림(개정판/, 따옴표, 끝의 ':' 등)은 무시한다.
@@ -46,10 +36,15 @@ const group = (books: ChangbiBook[]) => {
   }
   return list
 }
-const pageOf = <T,>(items: T[], page: number): Page<T> => ({
-  content: items.slice(page * SIZE, (page + 1) * SIZE), number: page, totalElements: items.length,
-  totalPages: Math.ceil(items.length / SIZE), first: page === 0, last: (page + 1) * SIZE >= items.length,
-})
+// 목록이 줄어 page가 끝을 넘으면 마지막 쪽으로
+const pageOf = <T,>(items: T[], wanted: number): Page<T> => {
+  const totalPages = Math.ceil(items.length / SIZE)
+  const page = Math.min(wanted, Math.max(0, totalPages - 1))
+  return {
+    content: items.slice(page * SIZE, (page + 1) * SIZE), number: page, totalElements: items.length,
+    totalPages, first: page === 0, last: (page + 1) * SIZE >= items.length,
+  }
+}
 // 묶음 이름은 가장 짧은 표기('창비 ‘소설의 첫 만남’ 시리즈'보다 '소설의 첫 만남')
 const seriesName = (books: ChangbiBook[]) => books.map(book => book.series ?? '').reduce((a, b) => b.length < a.length ? b : a)
 
@@ -69,14 +64,11 @@ export default function Changbi() {
   const resize = (size: number) => { setCardSize(size); try { localStorage.setItem('changbi-card-size', String(size)) } catch { /* 저장 못 해도 지금 화면엔 적용 */ } }
 
   useEffect(() => {
-    fetch('/cover-agent/changbi/books').then(async response => {
-      const data = await response.json().catch(() => null)
-      if (!response.ok) throw new Error(data?.message ?? '창비 자료를 불러올 수 없습니다. npm run cover-agent를 실행해 주세요.')
-      setBooks(data)
-    }).catch(e => setLoadError(e instanceof Error ? e.message : String(e)))
+    loadChangbiBooks().then(setBooks).catch(e => setLoadError(e instanceof Error ? e.message : String(e)))
     const queued = (e: Event) => {
       const { key, applied } = (e as CustomEvent<{ key: string; applied: ChangbiBook['applied'] }>).detail
       setBooks(list => list && list.map(book => book.key === key ? { ...book, applied } : book))
+      patchChangbiBook(key, { applied })
     }
     window.addEventListener('publish:queued', queued)
     return () => window.removeEventListener('publish:queued', queued)
@@ -112,10 +104,10 @@ export default function Changbi() {
   const selected = books?.find(book => book.key === selectedKey)
   const update = (key: string, change: Partial<ChangbiBook>) => {
     setBooks(list => list && list.map(book => book.key === key ? { ...book, ...change } : book))
+    patchChangbiBook(key, change)
     setVersions(v => ({ ...v, [key]: (v[key] ?? 0) + 1 }))
   }
-  const thumb = (book: ChangbiBook) => book.cover_file && usable(book)
-    ? `/cover-agent/changbi/thumbs/${encodeURIComponent(book.cover_file.replace(/\.[^.]+$/, ''))}.jpg?v=${versions[book.key] ?? 0}` : ''
+  const thumb = (book: ChangbiBook) => thumbUrl(book, versions[book.key] ?? 0)
   const filter = (set: () => void) => { set(); setPages({}) }
   const openGroup = (series: string) => { setOpenSeries(series); setPages(p => ({ ...p, open: 0 })) }
   const grid = (entries: Entry[], pageKey: string) => {
@@ -137,9 +129,10 @@ export default function Changbi() {
             </span>
           </button>
         }
+        const canQueue = usable(book) && !book.applied && !translated(book) // 서버의 /changbi/register 조건과 같다
         return <button key={book.key} className={'changbi-item' + (book.key === selectedKey ? ' selected' : '')} onClick={() => setSelectedKey(book.key)}
-          draggable={usable(book) && !book.applied} onDragStart={e => e.dataTransfer.setData(CHANGBI_DRAG, book.key)}
-          title={usable(book) && !book.applied ? '사이드바의 퍼블리시로 끌어다 놓으면 펜딩으로 등록됩니다' : undefined}>
+          draggable={canQueue} onDragStart={e => e.dataTransfer.setData(CHANGBI_DRAG, book.key)}
+          title={canQueue ? '사이드바의 퍼블리시로 끌어다 놓으면 펜딩으로 등록됩니다' : undefined}>
           {thumb(book) ? <img src={thumb(book)} alt="" loading="lazy" /> : <span className="nocover">{STATUS[book.cover_status]}</span>}
           <strong>{book.title}</strong>
           <span className="muted small">{[book.kind !== '단권' && `${book.series ?? ''} ${book.volume ?? ''}`.trim(), book.authors].filter(Boolean).join(' · ')}</span>
@@ -193,7 +186,7 @@ export default function Changbi() {
               <summary><h2>{section.label}</h2> <span className="muted small">{section.count}권{section.entries.length !== section.count && ` · ${section.entries.length}개 항목`}</span></summary>
               {grid(section.entries, section.key)}
             </details>)}
-          {!openSeries && !filtered.length && <p className="muted">조건에 맞는 책이 없습니다.</p>}
+          {(openSeries ? !opened.length : !filtered.length) && <p className="muted">조건에 맞는 책이 없습니다.</p>}
         </div>
         {selected && <Detail key={selected.key} book={selected} thumb={thumb(selected)} onChange={change => update(selected.key, change)} />}
       </div>
@@ -204,16 +197,8 @@ export default function Changbi() {
 function Detail({ book, thumb, onChange }: { book: ChangbiBook; thumb: string; onChange: (change: Partial<ChangbiBook>) => void }) {
   const [candidates, setCandidates] = useState<{ id: string; items: Candidate[] } | null>(null)
   const [matches, setMatches] = useState<SearchItem[] | null>(null)
-  const [busy, setBusy] = useState('')
-  const [error, setError] = useState('')
-  const [message, setMessage] = useState('')
+  const { busy, error, message, setMessage, work } = useWork()
   const token = session()?.token
-  const work = async (label: string, task: () => Promise<void>) => {
-    setBusy(label)
-    setError('')
-    setMessage('')
-    try { await task() } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusy('') }
-  }
 
   const loadCandidates = () => work('zip 이미지를 받는 중…', async () => setCandidates(await coverAgent('/changbi/candidates', { key: book.key })))
   const pick = (file: string, ribbon: 'clean' | 'banded') => work('표지로 저장하는 중…', async () => {

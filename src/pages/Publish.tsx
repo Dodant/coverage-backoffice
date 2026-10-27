@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, safeUrl } from '../api'
 import type { Page } from '../ui'
+import { useWork } from '../useWork'
 
 // 사이드바 '퍼블리시'에 끌어다 놓아 DRAFT로 등록된 원서. 고친 뒤 공개하면 사용자 화면(PUBLISHED만 노출)에 나온다
 type Draft = {
@@ -13,13 +14,13 @@ type Draft = {
 const FIELDS = [['title', '제목'], ['originalTitle', '원제'], ['isbn', 'ISBN'], ['year', '출간 연도'], ['genre', '장르'],
   ['edition', '판'], ['seriesNumber', '시리즈 권'], ['languageCode', '언어'], ['countryCode', '나라']] as const
 type Field = (typeof FIELDS)[number][0]
+const formOf = (book: Draft) => Object.fromEntries(FIELDS.map(([key]) => [key, String(book[key] ?? '')])) as Record<Field, string>
 
 export default function Publish() {
   const [drafts, setDrafts] = useState<Draft[] | null>(null)
   const [error, setError] = useState('')
-  const [params] = useSearchParams()
-  const [selectedId, setSelectedId] = useState(() => params.get('id') ?? '')
-  useEffect(() => { const id = params.get('id'); if (id) setSelectedId(id) }, [params]) // 전역 검색에서 온 ?id=
+  const [selectedId, setSelectedId] = useState('')
+  const [params, setParams] = useSearchParams()
 
   const load = () => api<Page<Draft>>('/admin/books?status=DRAFT&size=200')
     .then(page => setDrafts(page.content))
@@ -29,6 +30,13 @@ export default function Publish() {
     window.addEventListener('publish:queued', load)
     return () => window.removeEventListener('publish:queued', load)
   }, [])
+  // 전역 검색에서 온 ?id=: 읽고 지워서 같은 책을 다시 골라도 반응한다
+  useEffect(() => {
+    const id = params.get('id')
+    if (!id) return
+    setSelectedId(id)
+    setParams({}, { replace: true })
+  }, [params, setParams])
 
   const selected = drafts?.find(book => book.id === selectedId)
   return <>
@@ -50,20 +58,19 @@ export default function Publish() {
 }
 
 function Editor({ book, onSaved, onPublished }: { book: Draft; onSaved: (book: Draft) => void; onPublished: () => void }) {
-  const [form, setForm] = useState<Record<Field, string>>(() => Object.fromEntries(FIELDS.map(([key]) => [key, String(book[key] ?? '')])) as Record<Field, string>)
-  const [busy, setBusy] = useState('')
-  const [error, setError] = useState('')
-  const [message, setMessage] = useState('')
-  const dirty = FIELDS.some(([key]) => form[key] !== String(book[key] ?? ''))
-  const work = async (label: string, task: () => Promise<void>) => {
-    setBusy(label); setError(''); setMessage('')
-    try { await task() } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusy('') }
-  }
-  // 바뀐 칸만 보낸다(백엔드 PUT은 null을 '그대로 둠'으로 본다)
+  const [form, setForm] = useState(() => formOf(book))
+  const { busy, error, message, setMessage, work } = useWork()
+  const changed = FIELDS.filter(([key]) => form[key] !== String(book[key] ?? ''))
+  const dirty = changed.length > 0
+  // 바뀐 칸만 보낸다. 백엔드 PUT은 null을 '그대로 둠'으로 보고 ''는 값으로 저장하므로 비우기는 받지 않는다
   const save = () => work('저장하는 중…', async () => {
-    const body = Object.fromEntries(FIELDS.filter(([key]) => form[key] !== String(book[key] ?? ''))
-      .map(([key]) => [key, key === 'year' ? Number(form[key]) || null : form[key].trim()]))
-    onSaved(await api<Draft>(`/books/original/${book.id}`, { method: 'PUT', body }))
+    const blank = changed.filter(([key]) => !form[key].trim()).map(([, label]) => label)
+    if (blank.length) throw new Error(`비울 수 없는 칸입니다(백엔드가 빈 값을 받지 않음): ${blank.join(', ')}`)
+    if (changed.some(([key]) => key === 'year') && !/^\d{4}$/.test(form.year.trim())) throw new Error('출간 연도는 네 자리 숫자여야 합니다.')
+    const body = Object.fromEntries(changed.map(([key]) => [key, key === 'year' ? Number(form.year) : form[key].trim()]))
+    const saved = await api<Draft>(`/books/original/${book.id}`, { method: 'PUT', body })
+    onSaved(saved)
+    setForm(formOf(saved)) // 서버가 돌려준 값으로 맞춰야 '저장됨' 상태가 정확하다
     setMessage('저장했습니다.')
   })
   const publish = () => work('공개하는 중…', async () => {

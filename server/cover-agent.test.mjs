@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { applyChangbiCover, applyCover, changbiFile, discover, loadChangbi, localRequest, pickChangbiCover, registerChangbiBook, searchBooks } from './cover-agent.mjs'
+import { applyChangbiCover, applyCover, changbiFile, discover, loadChangbi, firstAuthor, localRequest, pickChangbiCover, registerChangbiBook, searchBooks } from './cover-agent.mjs'
 
 test('book search returns selectable bibliographic results before cover discovery', async () => {
   const fetcher = async url => String(url).includes('openlibrary.org')
@@ -257,6 +257,30 @@ test('registering a changbi book creates a DRAFT original once', async () => {
   await assert.rejects(registerChangbiBook({ key }, 'Bearer t', { dir, callBackend: backend }), /이미 백엔드에 등록/)
   const translated = await changbiFixture({ cover_status: 'clean', cover_file: 'c.jpg', translators: '김번역' })
   await assert.rejects(registerChangbiBook({ key: (await loadChangbi(translated))[0].key }, 'Bearer t', { dir: translated, callBackend: backend }), /번역서/)
+})
+
+test('changbi registration drops shared ISBNs and doubtful author names and ignores a second drop', async () => {
+  const dir = await changbiFixture({ cover_status: 'clean', cover_file: 'c.jpg', authors: '글 송진권, 그림 김윤이', isbn_shared: true })
+  await writeFile(join(dir, 'covers/c.jpg'), JPEG)
+  let release, reached
+  const gate = new Promise(resolve => { release = resolve })
+  const uploading = new Promise(resolve => { reached = resolve })
+  const bodies = []
+  const backend = async (path, auth, init = {}) => {
+    if (path === '/covers') { reached(); await gate; return { originalUrl: 'o', thumbnailUrl: 't' } }
+    bodies.push(JSON.parse(init.body))
+    return { id: 'book-1', title: '책', frontCover: { id: 'cover-1' } }
+  }
+  const key = (await loadChangbi(dir))[0].key
+  const first = registerChangbiBook({ key }, 'Bearer t', { dir, callBackend: backend })
+  await uploading
+  await assert.rejects(registerChangbiBook({ key }, 'Bearer t', { dir, callBackend: backend }), /등록 중/)
+  release()
+  await first
+  assert.equal(bodies.length, 1)
+  assert.equal(bodies[0].isbn, undefined)
+  assert.equal(bodies[0].authorName, undefined)
+  assert.deepEqual(['송진권(글), 김윤이(그림)', '한강 지음', '김유정 외', ''].map(firstAuthor), ['송진권', undefined, undefined, undefined])
 })
 
 test('applying needs a chosen changbi cover', async () => {
