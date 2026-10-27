@@ -6,6 +6,7 @@ import { langName } from '../lang'
 import { useWork } from '../useWork'
 import { Pager, type Page } from '../ui'
 import { IssueBadges } from './Books'
+import BookRelationships from './BookRelationships'
 
 export default function BookDetail() {
   const { id } = useParams()
@@ -85,11 +86,11 @@ function DetailPage({ id }: { id: string }) {
       {!versions.length && <p className="muted">등록된 표지가 없습니다.</p>}
       {!immutable && <AddCover bookId={book.id} onSaved={reload} />}
     </>}
-    {tab === 'related' && <section className="panel"><h2>원서·번역서·같은 작품의 다른 판</h2><p className="muted small">같은 작품으로 연결된 원서와 현재 원서의 번역서를 표시합니다. 다른 판의 정보를 이 도서에 덮어쓰지 마세요.</p>
+    {tab === 'related' && <>{!immutable && <BookRelationships detail={data} onSaved={reload} />}<section className="panel"><h2>원서·번역서·같은 작품의 다른 판</h2><p className="muted small">같은 작품으로 연결된 원서와 현재 원서의 번역서를 표시합니다. 다른 판의 정보를 이 도서에 덮어쓰지 마세요.</p>
       <div className="book-search-results">{relatedBooks.filter(b => b.id !== id).map(b => <Link className="book-search-item" key={b.id} to={`/books/${b.id}?${new URLSearchParams({ back: backPath })}`}>
         {imageOf(b.frontCover) ? <img src={imageOf(b.frontCover)} alt="" /> : <span className="nocover">표지 없음</span>}
         <span><strong>{b.title}</strong><small>{[b.kind === 'ORIGINAL' ? '원서' : '번역서', langName(b.languageCode), b.publisher, b.edition, b.year].filter(Boolean).join(' · ')}</small><small>{b.isbn || 'ISBN 없음'} · {STATUS_LABELS[b.status]}</small></span>
-      </Link>)}</div>{relatedBooks.filter(b => b.id !== id).length === 0 && <p className="muted">연결된 다른 도서가 없습니다.</p>}</section>}
+      </Link>)}</div>{relatedBooks.filter(b => b.id !== id).length === 0 && <p className="muted">연결된 다른 도서가 없습니다.</p>}</section></>}
     {tab === 'history' && <History id={id} kind={data.kind} />}
   </>
 }

@@ -259,3 +259,10 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .audit-entry pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 @media (max-width: 900px) { .catalog-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .cover-concepts { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .catalog-filters, .catalog-edit-grid { grid-template-columns: minmax(0, 1fr); } .catalog-query { grid-column: auto; } .tabs { flex-wrap: wrap; } }
+
+/* 관계 변경 검토 */
+.relationship-editor h2 { margin-top: 0; }
+.relationship-editor > label { display: grid; gap: 6px; margin: 12px 0; max-width: 600px; }
+.relationship-editor .book-search-results { margin: 12px 0; }
+.relationship-preview { border: 1px solid var(--accent); border-radius: 6px; padding: 12px; margin-top: 16px; }
+.relationship-preview h3 { margin: 0; font-size: 14px; }
