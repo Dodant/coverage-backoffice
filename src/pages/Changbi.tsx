@@ -15,11 +15,42 @@ type ChangbiBook = {
 type Candidate = { name: string; file: string; thumb: string; bytes: number }
 type SearchItem = { id: string; type: string; title: string; author: string; publisher: string | null; year: number | null; thumbnailUrl: string | null }
 
-const TABS = [['all', '전체'], ['single', '단권'], ['series', '시리즈'], ['translated', '번역서'], ['review', '확인 필요']] as const
+const TABS = [['all', '전체'], ['translated', '번역서'], ['review', '확인 필요']] as const
+// 한 화면에 위아래로 나눠 보여 주는 묶음. 제목을 눌러 접는다
+const SECTIONS = [
+  ['single', '단권', (book: ChangbiBook) => book.kind === '단권'],
+  ['series', '시리즈', (book: ChangbiBook) => book.kind !== '단권' && book.kind !== '잡지'],
+  ['magazine', '잡지', (book: ChangbiBook) => book.kind === '잡지'],
+] as const
 const STATUS: Record<ChangbiBook['cover_status'], string> = { clean: '띠지 없음', 띠지: '띠지 있음', 미확인: '표지 미확인', 여러권: '여러 권', 오류: '받기 실패' }
+const translated = (book: ChangbiBook) => Boolean(book.original_title || book.translators)
 const usable = (book: ChangbiBook) => book.cover_status === 'clean' || book.cover_status === '띠지'
 const needsReview = (book: ChangbiBook) => !usable(book) || !book.isbn || Boolean(book.isbn_shared)
 const SIZE = 60
+// 같은 시리즈의 연작·총서·세트·잡지를 한 카드로 묶는 키. 표기 흔들림(개정판/, 따옴표, 끝의 ':' 등)은 무시한다.
+const seriesKey = (book: ChangbiBook) => book.kind === '단권' ? '' : (book.series ?? '')
+  .replace(/^개정판\//, '').replace(/^창비\s+/, '').replace(/[‘’'"]/g, '').replace(/\s*시리즈$/, '').replace(/[\s:]+$/, '')
+type Entry = { key: string; books: ChangbiBook[]; series?: string }
+const group = (books: ChangbiBook[]) => {
+  const list: Entry[] = [], groups = new Map<string, Entry>()
+  for (const book of books) {
+    const series = seriesKey(book)
+    const found = series && groups.get(series)
+    if (found) found.books.push(book)
+    else {
+      const entry: Entry = { key: series ? 'series:' + series : book.key, books: [book], series: series || undefined }
+      list.push(entry)
+      if (series) groups.set(series, entry)
+    }
+  }
+  return list
+}
+const pageOf = <T,>(items: T[], page: number): Page<T> => ({
+  content: items.slice(page * SIZE, (page + 1) * SIZE), number: page, totalElements: items.length,
+  totalPages: Math.ceil(items.length / SIZE), first: page === 0, last: (page + 1) * SIZE >= items.length,
+})
+// 묶음 이름은 가장 짧은 표기('창비 ‘소설의 첫 만남’ 시리즈'보다 '소설의 첫 만남')
+const seriesName = (books: ChangbiBook[]) => books.map(book => book.series ?? '').reduce((a, b) => b.length < a.length ? b : a)
 
 export default function Changbi() {
   const [books, setBooks] = useState<ChangbiBook[] | null>(null)
@@ -28,8 +59,9 @@ export default function Changbi() {
   const [status, setStatus] = useState('')
   const [applied, setApplied] = useState('')
   const [query, setQuery] = useState('')
-  const [page, setPage] = useState(0)
+  const [pages, setPages] = useState<Record<string, number>>({})
   const [selectedKey, setSelectedKey] = useState('')
+  const [openSeries, setOpenSeries] = useState('')
   const [versions, setVersions] = useState<Record<string, number>>({})
 
   useEffect(() => {
@@ -43,18 +75,20 @@ export default function Changbi() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return (books ?? []).filter(book =>
-      (tab === 'all' || (tab === 'single' ? book.kind === '단권' : tab === 'series' ? book.kind !== '단권'
-        : tab === 'translated' ? Boolean(book.original_title || book.translators) : needsReview(book)))
+      (tab === 'all' || (tab === 'translated' ? translated(book) : needsReview(book)))
       && (!status || book.cover_status === status)
       && (!applied || (applied === 'yes') === Boolean(book.applied))
       && (!q || [book.title, book.original_title, book.authors, book.translators, book.isbn, book.series]
         .some(value => value?.toLowerCase().includes(q))))
   }, [books, tab, status, applied, query])
 
-  const pageData: Page<ChangbiBook> = {
-    content: filtered.slice(page * SIZE, (page + 1) * SIZE), number: page, totalElements: filtered.length,
-    totalPages: Math.ceil(filtered.length / SIZE), first: page === 0, last: (page + 1) * SIZE >= filtered.length,
-  }
+  const sections = useMemo(() => SECTIONS.map(([key, label, match]) => {
+    const list = filtered.filter(match)
+    // 단권은 번역서를 앞으로(sort는 안정 정렬이라 나머지 순서는 그대로)
+    if (key === 'single') list.sort((a, b) => Number(translated(b)) - Number(translated(a)))
+    return { key, label, count: list.length, entries: group(list) }
+  }), [filtered])
+  const opened = useMemo(() => openSeries ? filtered.filter(book => seriesKey(book) === openSeries) : [], [filtered, openSeries])
   const selected = books?.find(book => book.key === selectedKey)
   const update = (key: string, change: Partial<ChangbiBook>) => {
     setBooks(list => list && list.map(book => book.key === key ? { ...book, ...change } : book))
@@ -62,7 +96,40 @@ export default function Changbi() {
   }
   const thumb = (book: ChangbiBook) => book.cover_file && usable(book)
     ? `/cover-agent/changbi/thumbs/${encodeURIComponent(book.cover_file.replace(/\.[^.]+$/, ''))}.jpg?v=${versions[book.key] ?? 0}` : ''
-  const filter = (set: () => void) => { set(); setPage(0) }
+  const filter = (set: () => void) => { set(); setPages({}) }
+  const openGroup = (series: string) => { setOpenSeries(series); setPages(p => ({ ...p, open: 0 })) }
+  const grid = (entries: Entry[], pageKey: string) => {
+    const pageData = pageOf(entries, pages[pageKey] ?? 0)
+    return <>
+      <div className="changbi-grid">{pageData.content.map(entry => {
+        const book = entry.books[0]
+        if (entry.series && entry.books.length > 1) {
+          const cover = entry.books.map(thumb).find(Boolean)
+          const review = entry.books.filter(needsReview).length
+          const done = entry.books.filter(b => b.applied).length
+          return <button key={entry.key} className="changbi-item changbi-series" onClick={() => openGroup(entry.series!)}>
+            {cover ? <img src={cover} alt="" loading="lazy" /> : <span className="nocover">표지 없음</span>}
+            <strong>{seriesName(entry.books)}</strong>
+            <span className="muted small">{book.kind} · {entry.books.length}권</span>
+            <span className="row">
+              {review > 0 && <span className="badge s-failed">확인 필요 {review}</span>}
+              {done > 0 && <span className="badge s-created">적용 {done}</span>}
+            </span>
+          </button>
+        }
+        return <button key={book.key} className={'changbi-item' + (book.key === selectedKey ? ' selected' : '')} onClick={() => setSelectedKey(book.key)}>
+          {thumb(book) ? <img src={thumb(book)} alt="" loading="lazy" /> : <span className="nocover">{STATUS[book.cover_status]}</span>}
+          <strong>{book.title}</strong>
+          <span className="muted small">{[book.kind !== '단권' && `${book.series ?? ''} ${book.volume ?? ''}`.trim(), book.authors].filter(Boolean).join(' · ')}</span>
+          <span className="row">
+            {book.cover_status !== 'clean' && <span className={'badge ' + (usable(book) ? 's-dry' : 's-failed')}>{STATUS[book.cover_status]}</span>}
+            {book.applied && <span className="badge s-created">적용됨</span>}
+          </span>
+        </button>
+      })}</div>
+      <Pager page={pageData} onPage={page => setPages(p => ({ ...p, [pageKey]: page }))} />
+    </>
+  }
 
   return <>
     <h1>창비 자료실</h1>
@@ -76,7 +143,7 @@ export default function Changbi() {
         <div className="stat"><b>{books.filter(book => book.applied).length}</b>백엔드 적용</div>
       </div>
       <div className="tabs" style={{ marginTop: 16 }}>
-        {TABS.map(([key, label]) => <button key={key} className={tab === key ? 'on' : ''} onClick={() => filter(() => setTab(key))}>{label}</button>)}
+        {TABS.map(([key, label]) => <button key={key} className={tab === key ? 'on' : ''} onClick={() => filter(() => { setTab(key); setOpenSeries('') })}>{label}</button>)}
       </div>
       <div className="row" style={{ marginBottom: 12 }}>
         <input aria-label="검색어" placeholder="제목, 원제, 저자, ISBN, 시리즈" value={query} onChange={e => filter(() => setQuery(e.target.value))} />
@@ -89,18 +156,19 @@ export default function Changbi() {
         </select>
         <span className="muted small">{filtered.length}권</span>
       </div>
+      {openSeries && <div className="row" style={{ marginBottom: 12 }}>
+        <button onClick={() => openGroup('')}>← 목록으로</button>
+        <strong>{opened.length ? seriesName(opened) : openSeries}</strong>
+        <span className="muted small">{opened.length}권</span>
+      </div>}
       <div className={'changbi-layout' + (selected ? ' with-detail' : '')}>
         <div>
-          <div className="changbi-grid">{pageData.content.map(book => <button key={book.key} className={'changbi-item' + (book.key === selectedKey ? ' selected' : '')} onClick={() => setSelectedKey(book.key)}>
-            {thumb(book) ? <img src={thumb(book)} alt="" loading="lazy" /> : <span className="nocover">{STATUS[book.cover_status]}</span>}
-            <strong>{book.title}</strong>
-            <span className="muted small">{[book.kind !== '단권' && `${book.series ?? ''} ${book.volume ?? ''}`.trim(), book.authors].filter(Boolean).join(' · ')}</span>
-            <span className="row">
-              {book.cover_status !== 'clean' && <span className={'badge ' + (usable(book) ? 's-dry' : 's-failed')}>{STATUS[book.cover_status]}</span>}
-              {book.applied && <span className="badge s-created">적용됨</span>}
-            </span>
-          </button>)}</div>
-          <Pager page={pageData} onPage={setPage} />
+          {openSeries ? grid(opened.map(book => ({ key: book.key, books: [book] })), 'open')
+            : sections.filter(section => section.count).map(section => <details key={section.key} className="changbi-section" open>
+              <summary><h2>{section.label}</h2> <span className="muted small">{section.count}권{section.entries.length !== section.count && ` · ${section.entries.length}개 항목`}</span></summary>
+              {grid(section.entries, section.key)}
+            </details>)}
+          {!openSeries && !filtered.length && <p className="muted">조건에 맞는 책이 없습니다.</p>}
         </div>
         {selected && <Detail key={selected.key} book={selected} thumb={thumb(selected)} onChange={change => update(selected.key, change)} />}
       </div>
