@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { applyChangbiCover, applyCover, changbiFile, discover, loadChangbi, localRequest, pickChangbiCover, searchBooks } from './cover-agent.mjs'
+import { applyChangbiCover, applyCover, changbiFile, discover, loadChangbi, localRequest, pickChangbiCover, registerChangbiBook, searchBooks } from './cover-agent.mjs'
 
 test('book search returns selectable bibliographic results before cover discovery', async () => {
   const fetcher = async url => String(url).includes('openlibrary.org')
@@ -234,6 +234,29 @@ test('changbi covers over the backend limit are shrunk before upload', async () 
   const key = (await loadChangbi(dir))[0].key
   await applyChangbiCover({ key, bookId: '00000000-0000-4000-8000-000000000001', kind: 'original' }, 'Bearer t', { dir, callBackend: backend, tool })
   assert.equal(uploaded, JPEG.length)
+})
+
+test('registering a changbi book creates a DRAFT original once', async () => {
+  const dir = await changbiFixture({ cover_status: 'clean', cover_file: 'c.jpg', authors: '송진권(글), 김윤이(그림)', kind: '총서', series: '창비시선', volume: '501' })
+  await writeFile(join(dir, 'covers/c.jpg'), JPEG)
+  const calls = []
+  const backend = async (path, auth, init = {}) => {
+    calls.push({ path, init })
+    if (path === '/covers') return { originalUrl: 'o', thumbnailUrl: 't', originalFileName: 'cover.jpg', width: 800, height: 1200, fileSize: 3 }
+    return { id: 'book-1', title: '책', frontCover: { id: 'cover-1' } }
+  }
+  const key = (await loadChangbi(dir))[0].key
+  const result = await registerChangbiBook({ key }, 'Bearer t', { dir, callBackend: backend })
+  assert.equal(result.bookId, 'book-1')
+  const body = JSON.parse(calls.find(call => call.path === '/books/original').init.body)
+  assert.equal(body.status, 'DRAFT')
+  assert.equal(body.authorName, '송진권')
+  assert.equal(body.year, 2026)
+  assert.deepEqual([body.seriesName, body.seriesNumber, body.frontCover.imageUrl, body.frontCover.sourceName], ['창비시선', '501', 'o', '창비 보도자료'])
+  assert.equal((await loadChangbi(dir))[0].applied.bookId, 'book-1')
+  await assert.rejects(registerChangbiBook({ key }, 'Bearer t', { dir, callBackend: backend }), /이미 백엔드에 등록/)
+  const translated = await changbiFixture({ cover_status: 'clean', cover_file: 'c.jpg', translators: '김번역' })
+  await assert.rejects(registerChangbiBook({ key: (await loadChangbi(translated))[0].key }, 'Bearer t', { dir: translated, callBackend: backend }), /번역서/)
 })
 
 test('applying needs a chosen changbi cover', async () => {
