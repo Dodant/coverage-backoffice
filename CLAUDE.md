@@ -29,7 +29,8 @@ The SPA talks to three backends, all same-origin via the Vite proxy (`vite.confi
 
 - `src/api.ts` — `api<T>(path)` wraps `fetch('/api' + path)`, attaches `Authorization: Bearer` from the `coverage-backoffice-session` sessionStorage entry if present, throws `ApiError`. Use `safeUrl()` for any externally sourced URL put into `href`/`src`.
 - Login UI was removed for development preview (`/login` redirects to `/cover-discovery`), but backend admin mutations (`/admin/...`) and cover-agent `/apply` still require an ADMIN bearer token.
-- `src/App.tsx` — sidebar (`MENU`: sections 수집 → 검토·공개 → 관리, one `{to, label, badge?, drop?}` per item), routes, the 퍼블리시 drop target and the toast; one file per screen in `src/pages/`. Shared bits: `ui.tsx` (`Page<T>` Spring pagination type, `Pager`), `lang.ts` (language code → Korean name).
+- `src/App.tsx` — sidebar (`MENU`: sections 수집 → 검토·공개 → 관리, one `{to, label, badge?, drop?}` per item), routes, the 퍼블리시 drop target and the toast; one file per screen in `src/pages/`.
+- `src/GlobalSearch.tsx` — sidebar search palette (`/` key). Queries backend `/search`, `/admin/books?status=DRAFT` and cover-agent `/changbi/books` (cached per session) in parallel; a hit navigates to the screen with that item selected: `/covers/:originalId` (translated hits resolve their original first), `/publish?id=`, `/publishers/changbi?key=`. Pages read those params once and then clear them. Shared bits: `ui.tsx` (`Page<T>` Spring pagination type, `Pager`), `lang.ts` (language code → Korean name).
 - Pages call `api()` for backend data, but call `fetch('/cover-agent/...')` and `fetch('/agent/...')` directly.
 
 ### Cover agent (`server/cover-agent.mjs`)

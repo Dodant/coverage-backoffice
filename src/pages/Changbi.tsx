@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api, CHANGBI_DRAG, coverAgent, safeUrl, session } from '../api'
 import { Pager, type Page } from '../ui'
 
@@ -63,6 +64,7 @@ export default function Changbi() {
   const [selectedKey, setSelectedKey] = useState('')
   const [openSeries, setOpenSeries] = useState('')
   const [versions, setVersions] = useState<Record<string, number>>({})
+  const [params, setParams] = useSearchParams()
   const [cardSize, setCardSize] = useState(() => { try { return Number(localStorage.getItem('changbi-card-size')) || 124 } catch { return 124 } })
   const resize = (size: number) => { setCardSize(size); try { localStorage.setItem('changbi-card-size', String(size)) } catch { /* 저장 못 해도 지금 화면엔 적용 */ } }
 
@@ -79,6 +81,16 @@ export default function Changbi() {
     window.addEventListener('publish:queued', queued)
     return () => window.removeEventListener('publish:queued', queued)
   }, [])
+
+  // 전역 검색에서 온 ?key=: 그 책을 고르고 제목으로 걸러 카드가 보이게 한다
+  useEffect(() => {
+    const key = params.get('key')
+    const book = key && books?.find(b => b.key === key)
+    if (!book) return
+    setSelectedKey(book.key)
+    setTab('all'); setStatus(''); setApplied(''); setQuery(book.title); setOpenSeries(seriesKey(book)); setPages({})
+    setParams({}, { replace: true })
+  }, [params, books, setParams])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()

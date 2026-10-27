@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api, safeUrl } from '../api'
 import type { Page } from '../ui'
 
@@ -16,7 +17,9 @@ type Field = (typeof FIELDS)[number][0]
 export default function Publish() {
   const [drafts, setDrafts] = useState<Draft[] | null>(null)
   const [error, setError] = useState('')
-  const [selectedId, setSelectedId] = useState('')
+  const [params] = useSearchParams()
+  const [selectedId, setSelectedId] = useState(() => params.get('id') ?? '')
+  useEffect(() => { const id = params.get('id'); if (id) setSelectedId(id) }, [params]) // 전역 검색에서 온 ?id=
 
   const load = () => api<Page<Draft>>('/admin/books?status=DRAFT&size=200')
     .then(page => setDrafts(page.content))

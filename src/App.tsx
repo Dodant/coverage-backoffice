@@ -9,6 +9,7 @@ import CoverDiscovery from './pages/CoverDiscovery'
 import Runs from './pages/Runs'
 import Changbi from './pages/Changbi'
 import Publish from './pages/Publish'
+import GlobalSearch from './GlobalSearch'
 
 // 사이드바. 작업 흐름(수집 → 검토·공개 → 관리) 순서. 항목 추가는 여기 한 줄
 type Item = { to: string; label: string; badge?: 'pending'; drop?: boolean }
@@ -71,6 +72,7 @@ function Shell() {
     <div className="layout">
       <nav className="side">
         <div className="brand">COVERAGE 백오피스</div>
+        <GlobalSearch />
         {MENU.map((group, i) => <div key={group.section ?? i} className="side-section">
           {group.section && <span className="side-title">{group.section}</span>}
           {group.items.map(item => <NavLink key={item.to} to={item.to}
