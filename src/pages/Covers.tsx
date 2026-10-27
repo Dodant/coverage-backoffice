@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, safeUrl } from '../api'
 import { langName } from '../lang'
+import { loadEditions } from '../catalog'
 
-type Cover = { id: string; imageUrl: string | null; thumbnailUrl: string | null; width: number; height: number; similarGroupId: string | null }
-type Book = { id: string; title: string; languageCode: string; isbn: string | null; frontCover: Cover | null }
+type Cover = { id: string; imageUrl: string | null; thumbnailUrl: string | null; width: number; height: number; similarGroupId: string | null; label?: string | null }
+type Book = { id: string; title: string; languageCode: string; isbn: string | null; frontCover: Cover | null; covers?: Cover[] }
 type SearchItem = { id: string; type: string; title: string; author: string; year: number | null; thumbnailUrl: string | null }
 type SimilarBook = { id: string; title: string; type: string }
 
@@ -13,7 +14,7 @@ export default function Covers() {
   return (
     <>
       <h1>표지 묶기</h1>
-      <p className="muted">언어가 달라도 디자인이 비슷한 표지를 묶습니다. 표지를 선택하고 이동할 묶음을 누르거나, 표지를 끌어다 놓으세요.</p>
+      <p className="muted">언어·판이 달라도 디자인이 비슷한 표지를 묶습니다. 대표 표지와 표지 변형을 모두 표시합니다. 동일 이미지나 같은 판이라는 의미는 아닙니다.</p>
       <BookSearch />
       {originalId && <Board key={originalId} originalId={originalId} />}
     </>
@@ -86,11 +87,7 @@ function Board({ originalId }: { originalId: string }) {
 
   const load = useCallback(async () => {
     try {
-      const [orig, trans] = await Promise.all([
-        api<Book>(`/books/original/${originalId}`),
-        api<Book[]>(`/books/translated/by-original/${originalId}`),
-      ])
-      setBooks([orig, ...trans])
+      setBooks(await loadEditions<Book>(originalId))
       setError('')
     } catch (e) {
       setError(String(e))
@@ -116,7 +113,9 @@ function Board({ originalId }: { originalId: string }) {
 
   if (error) return <p className="error">{error}</p>
   if (!books) return <p className="muted">불러오는 중…</p>
-  const withCover = books.filter(b => b.frontCover && safeUrl(b.frontCover.thumbnailUrl || b.frontCover.imageUrl))
+  const withCover = books.flatMap(b => [...new Map([...(b.frontCover ? [b.frontCover] : []), ...(b.covers ?? [])].map(c => [c.id, c])).values()]
+    .filter(c => safeUrl(c.thumbnailUrl || c.imageUrl))
+    .map(c => ({ ...b, title: c.label ? `${b.title} · ${c.label}` : b.title, frontCover: c })))
   // 같은 similarGroupId끼리 한 더미. 다른 작품의 표지와 묶였을 수도 있지만 여기서는 이 작품의 판만 보인다
   const piles: Book[][] = []
   const byGroup = new Map<string, Book[]>()
@@ -127,7 +126,7 @@ function Board({ originalId }: { originalId: string }) {
     byGroup.get(g)!.push(b)
   }
   piles.sort((a, b) => b.length - a.length)
-  const noCover = books.filter(b => !withCover.includes(b))
+  const noCover = books.filter(b => !withCover.some(item => item.id === b.id))
   const selectedBook = withCover.find(b => b.frontCover!.id === selected)
 
   return (

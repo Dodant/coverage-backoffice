@@ -96,12 +96,18 @@ export async function applyCover(input, authorization, fetcher = fetch, callBack
 
   const label = [ribbon === 'clean' ? '띠지 없음' : ribbon === 'banded' ? '띠지 있음' : '띠지 확인 필요',
     clean(input.edition), clean(input.publisher), input.year ? String(input.year) : ''].filter(Boolean).join(' · ')
-  return attachCover({ bookId, kind, sourceUrl: imageUrl, sourceName: input.source, label, image: () => downloadCover(imageUrl, fetcher) }, authorization, callBackend)
+  return attachCover({ bookId, kind, sourceUrl: imageUrl, sourceName: input.source, label, ribbonStatus: ribbon.toUpperCase(), image: () => downloadCover(imageUrl, fetcher) }, authorization, callBackend)
 }
 
 // 표지 변형으로 올리고 대표로 지정한다. 같은 출처 주소로 이미 올린 변형이 있으면 다시 올리지 않는다.
-async function attachCover({ bookId, kind, sourceUrl, sourceName, label, image }, authorization, callBackend) {
-  const book = await callBackend(`/books/${kind}/${bookId}`, authorization)
+async function attachCover({ bookId, kind, sourceUrl, sourceName, label, ribbonStatus = 'UNKNOWN', image }, authorization, callBackend) {
+  // 공개 조회에서 제외된 초안·숨김 도서는 관리자 경로로 조회한다.
+  let book
+  try { book = await callBackend(`/books/${kind}/${bookId}`, authorization) }
+  catch (error) {
+    if (error.status !== 404) throw error
+    book = (await callBackend(`/admin/catalog/${bookId}`, authorization)).book
+  }
   const existing = (book.covers ?? []).find(cover => !cover.hidden && cover.sourceUrl === sourceUrl)
   let coverId = existing?.id
   if (!coverId) {
@@ -114,7 +120,7 @@ async function attachCover({ bookId, kind, sourceUrl, sourceName, label, image }
       body: JSON.stringify({
         imageUrl: upload.originalUrl, thumbnailUrl: upload.thumbnailUrl,
         originalFileName: upload.originalFileName, width: upload.width, height: upload.height, fileSize: upload.fileSize,
-        imageSource: 'LINK', sourceUrl, sourceName, label: label.slice(0, 100),
+        imageSource: 'LINK', sourceUrl, sourceName, label: label.slice(0, 100), ribbonStatus,
         languageCode: book.languageCode, countryCode: book.countryCode,
       }),
     })
@@ -410,6 +416,7 @@ async function changbiCover(dir, book, tool) {
     // 다른 이미지나 띠지 판정을 바꿔 다시 적용하면 새 변형으로 올라가도록 내용 해시와 띠지 상태를 넣는다
     sourceUrl: `${book.url}#${createHash('sha1').update(bytes).digest('hex').slice(0, 16)}-${ribbon}`,
     sourceName: '창비 보도자료',
+    ribbonStatus: ribbon.toUpperCase(),
     label: [ribbon === 'clean' ? '띠지 없음' : '띠지 있음', book.imprint || '창비', book.pub_month].filter(Boolean).join(' · '),
   }
 }

@@ -24,9 +24,7 @@ async function search(q: string, drafts: Promise<Drafts>): Promise<Group[]> {
       .map(item => ({
         key: item.id, title: item.title, thumb: safeUrl(item.thumbnailUrl),
         sub: [item.type === 'ORIGINAL' ? '원서' : '번역서', item.author, item.publisher, item.year].filter(Boolean).join(' · '),
-        // 표지 묶기는 원서 단위라 번역서는 원서 id를 찾아서 간다
-        to: item.type === 'ORIGINAL' ? `/covers/${item.id.replace(/^original_/, '')}`
-          : async () => `/covers/${(await api<{ originalBookId: string }>(`/books/translated/${item.id.replace(/^translated_/, '')}`)).originalBookId}`,
+        to: `/books/${item.id.replace(/^(original_|translated_)/, '')}`,
       })) }))
     .catch((): Group => ({ label: '등록된 책', hits: [], note: '검색 서버에 연결할 수 없습니다.' }))
   const pending = drafts.then((drafts): Group => ({ label: '펜딩', note: drafts.note, hits: drafts.list

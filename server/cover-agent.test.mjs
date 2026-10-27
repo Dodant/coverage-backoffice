@@ -139,6 +139,7 @@ test('applying a cover uploads a variant before making it representative', async
     ['PUT', `/books/${bookId}/covers/cover-1/representative`],
   ])
   assert.equal(JSON.parse(calls[2].body).label, '띠지 없음')
+  assert.equal(JSON.parse(calls[2].body).ribbonStatus, 'CLEAN')
 })
 
 test('applying an already imported cover reuses its variant', async () => {
@@ -153,6 +154,21 @@ test('applying an already imported cover reuses its variant', async () => {
   const result = await applyCover({ bookId, kind: 'original', imageUrl, source: 'Open Library', ribbon: 'unknown' }, 'Bearer token', () => { throw new Error('unexpected download') }, backend)
   assert.equal(result.reused, true)
   assert.deepEqual(calls, [['GET', `/books/original/${bookId}`], ['PUT', `/books/${bookId}/covers/cover-1/representative`]])
+})
+
+test('applying a draft cover reads the administrator detail instead of the public book', async () => {
+  const bookId = '11111111-1111-4111-8111-111111111111'
+  const imageUrl = 'https://covers.openlibrary.org/b/id/123-L.jpg'
+  const calls = []
+  const backend = async (path, _authorization, init = {}) => {
+    calls.push([init.method ?? 'GET', path])
+    if (path === `/books/original/${bookId}`) throw Object.assign(new Error('not public'), { status: 404 })
+    if (path === `/admin/catalog/${bookId}`) return { book: { covers: [{ id: 'cover-draft', sourceUrl: imageUrl }] } }
+    return null
+  }
+  const result = await applyCover({ bookId, kind: 'original', imageUrl, source: 'Open Library', ribbon: 'clean' }, 'Bearer token', () => { throw new Error('unexpected download') }, backend)
+  assert.equal(result.reused, true)
+  assert.deepEqual(calls, [['GET', `/books/original/${bookId}`], ['GET', `/admin/catalog/${bookId}`], ['PUT', `/books/${bookId}/covers/cover-draft/representative`]])
 })
 
 test('rejects non-provider image URLs before downloading', async () => {
