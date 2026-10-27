@@ -27,6 +27,9 @@ button:disabled { opacity: .5; cursor: default; }
 .side .brand { font-weight: 700; margin-bottom: 12px; }
 .side a { color: var(--text); padding: 6px 10px; border-radius: 6px; }
 .side a.active { background: var(--panel); border: 1px solid var(--line); }
+.side a.drop-over { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.publish-form { display: grid; gap: 8px; margin-top: 12px; }
+.publish-form label { display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
 .side .me { margin-top: auto; font-size: 12px; color: var(--muted); }
 .page { padding: 24px; max-width: 1200px; min-width: 0; }
 

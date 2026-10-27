@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, coverAgent, safeUrl, session } from '../api'
+import { api, CHANGBI_DRAG, coverAgent, safeUrl, session } from '../api'
 import { Pager, type Page } from '../ui'
 
 // 창비 자료실 보도자료에서 수집한 책(../changbi-press, cover-agent가 제공)
@@ -70,6 +70,12 @@ export default function Changbi() {
       if (!response.ok) throw new Error(data?.message ?? '창비 자료를 불러올 수 없습니다. npm run cover-agent를 실행해 주세요.')
       setBooks(data)
     }).catch(e => setLoadError(e instanceof Error ? e.message : String(e)))
+    const queued = (e: Event) => {
+      const { key, applied } = (e as CustomEvent<{ key: string; applied: ChangbiBook['applied'] }>).detail
+      setBooks(list => list && list.map(book => book.key === key ? { ...book, applied } : book))
+    }
+    window.addEventListener('publish:queued', queued)
+    return () => window.removeEventListener('publish:queued', queued)
   }, [])
 
   const filtered = useMemo(() => {
@@ -117,7 +123,9 @@ export default function Changbi() {
             </span>
           </button>
         }
-        return <button key={book.key} className={'changbi-item' + (book.key === selectedKey ? ' selected' : '')} onClick={() => setSelectedKey(book.key)}>
+        return <button key={book.key} className={'changbi-item' + (book.key === selectedKey ? ' selected' : '')} onClick={() => setSelectedKey(book.key)}
+          draggable={usable(book) && !book.applied} onDragStart={e => e.dataTransfer.setData(CHANGBI_DRAG, book.key)}
+          title={usable(book) && !book.applied ? '사이드바의 퍼블리시로 끌어다 놓으면 펜딩으로 등록됩니다' : undefined}>
           {thumb(book) ? <img src={thumb(book)} alt="" loading="lazy" /> : <span className="nocover">{STATUS[book.cover_status]}</span>}
           <strong>{book.title}</strong>
           <span className="muted small">{[book.kind !== '단권' && `${book.series ?? ''} ${book.volume ?? ''}`.trim(), book.authors].filter(Boolean).join(' · ')}</span>

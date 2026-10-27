@@ -58,3 +58,6 @@ export async function coverAgent<T>(path: string, body: unknown, init: { token?:
 
 // http(s)만 href/src에 넣는다 (에이전트 기록은 웹에서 모은 값이라 javascript: 등을 막는다)
 export const safeUrl = (u: unknown) => (/^https?:\/\//i.test(String(u ?? '')) ? String(u) : '')
+
+// 창비 자료실 카드 → 사이드바 '퍼블리시' 드래그 데이터 형식
+export const CHANGBI_DRAG = 'application/x-changbi-key'
