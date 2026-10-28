@@ -11,9 +11,10 @@ COVERAGE 백오피스: Vite + React 19 + TypeScript SPA, plus one small Node ser
 - `npm run build` — `tsc -b && vite build` (this is the type check)
 - `npm run lint` — ESLint
 - `npm run test:cover-agent` — `node --test server/cover-agent.test.mjs`
+- `npm run test:browser` — Playwright 표지 편집 회귀 테스트. 최초 `npx playwright install chromium` 필요. 로컬 Chrome은 `PLAYWRIGHT_CHANNEL=chrome npm run test:browser`. 전용 포트 4175와 모킹 API를 사용한다.
 - Single test: `node --test --test-name-pattern "<name substring>" server/cover-agent.test.mjs`
 
-Verification before finishing: `npm run build && npm run lint && npm run test:cover-agent`. There are no frontend tests.
+Verification before finishing: `npm run build && npm run lint && npm run test:cover-agent`. 표지 편집 변경 시 `npm run test:browser`도 실행한다.
 
 ## Runtime topology
 

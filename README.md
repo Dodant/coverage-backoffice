@@ -25,3 +25,10 @@ COVERAGE 백오피스 (Vite + React + TS). 개발 중에는 로그인 화면 없
 - 운영 배포 전 `coverage-backend/scripts/migrations/2026-10-27_image_fingerprints.sql`을 적용한다. 기존 `sha256`(차단용 픽셀 해시)은 유지하며 새 `file_sha256`은 실제 저장 바이트의 해시다.
 
 실데이터 확인 결과는 `docs/backoffice-verification-2026-10-27.md`에 기록했다.
+
+브라우저 회귀 테스트:
+- 최초 설정: `npx playwright install chromium`, 실행: `npm run test:browser`.
+- 설치된 Chrome을 쓰려면 `PLAYWRIGHT_CHANNEL=chrome npm run test:browser`.
+- 테스트가 4175 포트에 전용 Vite 서버를 띄우고 API 응답을 격리한다. 표지 카드 간 미저장 입력 유지, 대표·묶음 변경, 저장 실패·재시도, 늦게 도착한 갱신 응답을 검증한다.
+
+이미지 업로드는 파일 10MB 및 총 4천만 픽셀 이하를 공통 검증한다. 초과 이미지는 해시 계산·S3 저장 전에 400으로 거절한다.

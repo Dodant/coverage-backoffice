@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api, safeUrl, session } from '../api'
 import { coversOf, imageOf, CREDIT_LABELS, RIBBON_LABELS, STATUS_LABELS, VARIANT_LABELS, type Book, type Cover, type Detail } from '../catalog'
@@ -21,10 +21,13 @@ function DetailPage({ id }: { id: string }) {
   const [revision, setRevision] = useState(0)
   const [notice, setNotice] = useState('')
   const [dirtyForms, setDirtyForms] = useState<Record<string, boolean>>({})
+  const reloadRequest = useRef(0)
   const dirty = Object.values(dirtyForms).some(Boolean)
   const markDirty = useCallback((key: string, value: boolean) => setDirtyForms(old => ({ ...old, [key]: value })), [])
   const reload = useCallback(async () => {
+    const request = ++reloadRequest.current
     const result = await api<Detail>(`/admin/catalog/${id}`)
+    if (request !== reloadRequest.current) return
     setData(result)
     setRevision(v => v + 1)
     setNotice('변경사항을 저장했습니다.')
@@ -82,7 +85,7 @@ function DetailPage({ id }: { id: string }) {
     {tab === 'info' && <BookEditor key={`${id}-${revision}`} detail={data} disabled={immutable} onSaved={reload} markDirty={markDirty} />}
     {tab === 'versions' && <>
       <div className="panel cover-concepts"><div><strong>판</strong><p>ISBN·출판사·판이 다른 도서는 별도 도서로 관리합니다. 현재 판: {book.edition || '미입력'} · {book.isbn || 'ISBN 미입력'}</p></div><div><strong>표지 버전</strong><p>이 도서에 속한 리커버·쇄별 표지·띠지·이미지 교체를 기록합니다.</p></div><div><strong>디자인 묶음</strong><p>언어·판이 달라도 비슷한 디자인을 관리자가 묶습니다. 동일 이미지 주소 여부와 별개입니다.</p></div></div>
-      <div className="variant-grid">{versions.map(cover => <CoverEditor key={`${cover.id}-${revision}`} book={book} cover={cover} choices={choices} disabled={immutable} onSaved={reload} markDirty={markDirty} />)}</div>
+      <div className="variant-grid">{versions.map(cover => <CoverEditor key={cover.id} book={book} cover={cover} choices={choices} disabled={immutable} onSaved={reload} markDirty={markDirty} />)}</div>
       {!versions.length && <p className="muted">등록된 표지가 없습니다.</p>}
       {!immutable && <AddCover bookId={book.id} onSaved={reload} />}
     </>}
@@ -173,15 +176,25 @@ function MetadataFields({ form, setForm }: { form: CoverForm; setForm: (f: Cover
 }
 
 function CoverEditor({ book, cover, choices, disabled, onSaved, markDirty }: { book: Book; cover: Cover; choices: { cover: Cover; title: string }[]; disabled: boolean; onSaved: () => Promise<void>; markDirty: (key: string, value: boolean) => void }) {
-  const initial = formOf(cover)
-  const [form, setForm] = useState(initial)
+  const [form, setForm] = useState(() => formOf(cover))
+  const [savedForm, setSavedForm] = useState(() => formOf(cover))
+  const [previousCover, setPreviousCover] = useState(cover)
   const [groupTarget, setGroupTarget] = useState('')
-  const dirty = JSON.stringify(form) !== JSON.stringify(initial)
+  const dirty = JSON.stringify(form) !== JSON.stringify(savedForm)
+  // 서버 갱신 시 깨끗한 폼만 동기화한다. 다른 카드의 저장·대표 변경으로 미저장 입력을 지우지 않는다.
+  if (previousCover !== cover) {
+    setPreviousCover(cover)
+    if (!dirty) {
+      const incoming = formOf(cover)
+      setForm(incoming)
+      setSavedForm(incoming)
+    }
+  }
   const { busy, error, message, setMessage, work } = useWork()
   useEffect(() => { markDirty(cover.id, dirty); return () => markDirty(cover.id, false) }, [cover.id, dirty, markDirty])
   const identical = cover.imageUrl ? choices.filter(entry => entry.cover.id !== cover.id && entry.cover.imageUrl === cover.imageUrl) : []
   const representative = book.frontCover?.id === cover.id
-  return <article className="panel variant-card">
+  return <article className="panel variant-card" data-cover-id={cover.id}>
     <div className="variant-preview">{safeUrl(cover.imageUrl) ? <a href={safeUrl(cover.imageUrl)} target="_blank" rel="noopener noreferrer"><img src={imageOf(cover)} alt={cover.label || '표지 버전'} /></a> : <div className="catalog-no-cover">{cover.hidden ? '숨겨진 표지' : '이미지 없음'}</div>}
       <div><strong>{cover.label || '표지 버전'}</strong><p className="small muted">{cover.width && cover.height ? `${cover.width} × ${cover.height}px` : '해상도 미확인'}</p><span className={`badge ${representative ? 's-created' : ''}`}>{representative ? '대표 표지' : '표지 변형'}</span>
         <p className="small">{VARIANT_LABELS[cover.variantType ?? 'UNKNOWN']} · {RIBBON_LABELS[cover.ribbonStatus ?? 'UNKNOWN']}</p>
@@ -191,7 +204,14 @@ function CoverEditor({ book, cover, choices, disabled, onSaved, markDirty }: { b
     </div>
     <dl className="small"><dt>같은 판</dt><dd>현재 도서에 속함 · {book.edition || '판 미입력'}</dd><dt>동일 이미지 주소</dt><dd>{identical.length ? identical.map(e => e.title).join(', ') : '현재 도서·연결 도서의 대표 표지에서 일치 없음'}</dd><dt>디자인 묶음</dt><dd>{cover.similarGroupId ? <code>{cover.similarGroupId}</code> : '지정되지 않음'}</dd></dl>
     <p className="muted small">동일 이미지 주소는 같은 저장 URL 기준입니다. 다른 주소의 파일 내용까지 비교하지 않습니다.</p>
-    <form onSubmit={e => { e.preventDefault(); void work('표지 정보 저장 중…', async () => { await api(`/admin/catalog/${book.id}/covers/${cover.id}`, { method: 'PUT', body: metadata(form) }); markDirty(cover.id, false); await onSaved() }) }}>
+    <form onSubmit={e => { e.preventDefault(); void work('표지 정보 저장 중…', async () => {
+      const saved = await api<Cover>(`/admin/catalog/${book.id}/covers/${cover.id}`, { method: 'PUT', body: metadata(form) })
+      const acknowledged = formOf(saved)
+      setForm(acknowledged)
+      setSavedForm(acknowledged)
+      markDirty(cover.id, false)
+      await onSaved()
+    }) }}>
       <fieldset className="catalog-fieldset" disabled={disabled || Boolean(busy)}><legend>쇄·표지 메타데이터</legend><MetadataFields form={form} setForm={setForm} /></fieldset>
       <button className="primary" disabled={disabled || Boolean(busy) || !dirty}>표지 정보 저장</button>
     </form>
@@ -215,7 +235,7 @@ function AddCover({ bookId, onSaved }: { bookId: string; onSaved: () => Promise<
   const [fileKey, setFileKey] = useState(0)
   const { busy, error, message, work, setMessage } = useWork()
   return <details className="panel"><summary>이 판에 표지 버전 추가</summary>
-    <p className="muted small">JPEG·PNG·WebP, 최대 10MB. 기본 최소 해상도 800×1200px. 다른 ISBN의 표지는 해당 도서에 추가하세요.</p>
+    <p className="muted small">JPEG·PNG·WebP, 최대 10MB. 기본 최소 해상도 800×1200px, 최대 4천만 픽셀. 다른 ISBN의 표지는 해당 도서에 추가하세요.</p>
     <form onSubmit={e => { e.preventDefault(); void work('표지 버전 추가 중…', async () => {
       if (!file) throw new Error('표지 파일을 선택하세요.')
       if (file.size > 10 * 1024 * 1024) throw new Error('최대 10MB까지 업로드할 수 있습니다.')
