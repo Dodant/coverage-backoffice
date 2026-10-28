@@ -11,9 +11,10 @@ COVERAGE 백오피스: Vite + React 19 + TypeScript SPA, plus one small Node ser
 - `npm run build` — `tsc -b && vite build` (this is the type check)
 - `npm run lint` — ESLint
 - `npm run test:cover-agent` — `node --test server/cover-agent.test.mjs`
+- `npm run test:browser` — Playwright 표지 편집 회귀 테스트. 최초 `npx playwright install chromium` 필요. 로컬 Chrome은 `PLAYWRIGHT_CHANNEL=chrome npm run test:browser`. 전용 포트 4175와 모킹 API를 사용한다.
 - Single test: `node --test --test-name-pattern "<name substring>" server/cover-agent.test.mjs`
 
-Verification before finishing: `npm run build && npm run lint && npm run test:cover-agent`. There are no frontend tests.
+Verification before finishing: `npm run build && npm run lint && npm run test:cover-agent`. 표지 편집 변경 시 `npm run test:browser`도 실행한다.
 
 ## Runtime topology
 
@@ -31,7 +32,9 @@ The SPA talks to three backends, all same-origin via the Vite proxy (`vite.confi
 - Login UI was removed for development preview (`/login` redirects to `/cover-discovery`), but backend admin mutations (`/admin/...`) and cover-agent `/apply` still require an ADMIN bearer token.
 - `src/App.tsx` — sidebar (`MENU`: sections 수집 → 검토·공개 → 관리, one `{to, label, badge?, drop?}` per item), routes, the 퍼블리시 drop target and the toast; one file per screen in `src/pages/`.
 - `src/changbi.ts` — `ChangbiBook` type, `usable`/`translated`/`thumbUrl`, and the session cache of cover-agent `/changbi/books` (1.9MB) shared by `Changbi.tsx` and the global search; pages call `patchChangbiBook` after a pick/register so the cache stays current. `src/useWork.ts` — busy/error/message state for a button-driven task.
-- `src/GlobalSearch.tsx` — sidebar search palette (`/` key). Queries backend `/search`, `/admin/books?status=DRAFT` and cover-agent `/changbi/books` (cached per session) in parallel; a hit navigates to the screen with that item selected: `/covers/:originalId` (translated hits resolve their original first), `/publish?id=`, `/publishers/changbi?key=`. Pages read those params once and then clear them. Shared bits: `ui.tsx` (`Page<T>` Spring pagination type, `Pager`), `lang.ts` (language code → Korean name).
+- `src/GlobalSearch.tsx` — sidebar search palette (`/` key). Queries backend `/search`, `/admin/books?status=DRAFT` and cover-agent `/changbi/books` (cached per session) in parallel; a hit navigates to the screen with that item selected: `/books/:id` (원서·번역서 통합 상세), `/publish?id=`, `/publishers/changbi?key=`. Pages read those params once and then clear them. Shared bits: `ui.tsx` (`Page<T>` Spring pagination type, `Pager`), `lang.ts` (language code → Korean name).
+- `src/catalog.ts` — 도서·표지 타입, 보완/변형/띠지/크레딧 라벨, `loadEditions`(관리자 세션은 비공개 포함 조회, 없으면 공개 API). `Books.tsx`의 전체/보완 목록은 `/admin/catalog`에서 모든 필터를 적용한 뒤 페이지 처리하며 URL에 조건을 유지한다. `BookDetail.tsx`는 서지 편집·연결 도서·감사 이력과 표지 버전(업로드/대표 지정/쇄·기간·분류·띠지·출처·크레딧·디자인 묶음)을 관리한다. 새 API는 최신 백엔드와 관리자 인증이 필요하다.
+- `BookRelationships.tsx` — 연결 도서 탭의 관계 미리보기·충돌 검사 후 적용. `ImageDuplicates.tsx` — `/image-duplicates`에서 EXACT_FILE/SAME_URL/SIMILAR 비교, 구형 표지 해시 계산(10개씩 커서 이동·중단 가능), 실패 도서 링크. 실제 저장 바이트 해시와 유사 후보를 구분한다.
 - Pages call `api()` for backend data, but call `fetch('/cover-agent/...')` and `fetch('/agent/...')` directly.
 
 ### Cover agent (`server/cover-agent.mjs`)

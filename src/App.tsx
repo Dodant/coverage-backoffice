@@ -10,6 +10,9 @@ import Runs from './pages/Runs'
 import Changbi from './pages/Changbi'
 import Publish from './pages/Publish'
 import GlobalSearch from './GlobalSearch'
+import Books from './pages/Books'
+import BookDetail from './pages/BookDetail'
+import ImageDuplicates from './pages/ImageDuplicates'
 
 // 사이드바. 작업 흐름(수집 → 검토·공개 → 관리) 순서. 항목 추가는 여기 한 줄
 type Item = { to: string; label: string; badge?: 'pending'; drop?: boolean }
@@ -24,6 +27,9 @@ const MENU: { section?: string; items: Item[] }[] = [
     { to: '/covers', label: '표지 묶기' },
   ] },
   { section: '관리', items: [
+    { to: '/books', label: '전체 도서' },
+    { to: '/books/attention', label: '보완 필요 도서' },
+    { to: '/image-duplicates', label: '동일·유사 이미지' },
     { to: '/entities', label: '엔티티 정리' },
     { to: '/runs', label: '등록 기록' },
   ] },
@@ -80,7 +86,7 @@ function Shell() {
         <GlobalSearch />
         {MENU.map((group, i) => <div key={group.section ?? i} className="side-section">
           {group.section && <span className="side-title">{group.section}</span>}
-          {group.items.map(item => <NavLink key={item.to} to={item.to}
+          {group.items.map(item => <NavLink key={item.to} to={item.to} end={item.to === '/books'}
             className={item.drop ? (over ? 'drop-over' : dragging ? 'drop-target' : '') : ''}
             onDragOver={item.drop ? e => { if (e.dataTransfer.types.includes(CHANGBI_DRAG)) { e.preventDefault(); setOver(true) } } : undefined}
             onDragLeave={item.drop ? () => setOver(false) : undefined}
@@ -93,6 +99,10 @@ function Shell() {
       <main className="page">
         <Routes>
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/books" element={<Books />} />
+          <Route path="/books/attention" element={<Books attention />} />
+          <Route path="/books/:id" element={<BookDetail />} />
+          <Route path="/image-duplicates" element={<ImageDuplicates />} />
           <Route path="/covers" element={<Covers />} />
           <Route path="/covers/:originalId" element={<Covers />} />
           <Route path="/cover-discovery" element={<CoverDiscovery />} />

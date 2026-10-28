@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# 브라우저 테스트 결과
+/playwright-report/
+/test-results/

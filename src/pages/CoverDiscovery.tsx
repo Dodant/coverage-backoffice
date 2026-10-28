@@ -1,4 +1,6 @@
-import { useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { loadEditions } from '../catalog'
 import { api, coverAgent, safeUrl, session } from '../api'
 import { langName } from '../lang'
 
@@ -37,6 +39,9 @@ const versionKey = (candidate: Candidate) => candidate.isbn || [candidate.title,
 const versionLabel = (candidate: Candidate) => [candidate.publisher, candidate.year, candidate.edition, candidate.isbn].filter(Boolean).join(' · ') || candidate.title
 
 export default function CoverDiscovery() {
+  const [params] = useSearchParams()
+  const initialOriginalId = params.get('originalId')
+  const initialBookId = params.get('bookId')
   const [query, setQuery] = useState('')
   const [searchingBooks, setSearchingBooks] = useState(false)
   const [onlineBooks, setOnlineBooks] = useState<OnlineBook[] | null>(null)
@@ -161,11 +166,9 @@ export default function CoverDiscovery() {
     void discover(input)
   }
 
-  const loadWork = async (originalId: string, preferredId?: string) => {
-    const [main, translated] = await Promise.all([
-      api<Book>(`/books/original/${originalId}`),
-      api<Book[]>(`/books/translated/by-original/${originalId}`),
-    ])
+  const loadWork = useCallback(async (originalId: string, preferredId?: string, signal?: AbortSignal) => {
+    const [main, ...translated] = await loadEditions<Book>(originalId, signal)
+    if (signal?.aborted) throw new DOMException('취소됨', 'AbortError')
     setOriginal(main)
     setTranslations(translated)
     const groups: Record<string, string> = {}
@@ -176,7 +179,19 @@ export default function CoverDiscovery() {
     }
     setActiveEditions(groups)
     return { main, translated }
-  }
+  }, [])
+
+  useEffect(() => {
+    if (!initialOriginalId) return
+    const controller = new AbortController()
+    loadWork(initialOriginalId, initialBookId ?? undefined, controller.signal).then(({ main, translated }) => {
+      if (controller.signal.aborted) return
+      const book = translated.find(b => b.id === initialBookId) ?? main
+      setTargetId(book.id)
+      setSearchInput({ title: book.title, author: book.author?.name ?? main.author?.name ?? '', isbn: book.isbn ?? '' })
+    }).catch(e => { if (!controller.signal.aborted) setError(String(e)) })
+    return () => controller.abort()
+  }, [initialOriginalId, initialBookId, loadWork])
 
   const pickOriginal = async (item: SearchItem) => {
     setSelectedOnline(null)
