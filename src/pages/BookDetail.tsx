@@ -150,9 +150,9 @@ function EntityPicker({ kind, label, value, onChange }: { kind: string; label: s
     {error && <p className="error" role="alert">{error}</p>}{q && <div className="entity-options">{results.map(r => <button type="button" key={r.id} onClick={() => { onChange(r); setQ(''); setResults([]) }}>{r.name}</button>)}</div>}</div>
 }
 
-type CoverForm = { label: string; printingFrom: string; usedFrom: string; variantType: Cover['variantType']; ribbonStatus: Cover['ribbonStatus']; sourceName: string; sourceUrl: string; credits: Cover['credits'] }
-const formOf = (c?: Cover): CoverForm => ({ label: c?.label ?? '', printingFrom: String(c?.printingFrom ?? ''), usedFrom: c?.usedFrom ?? '', variantType: c?.variantType ?? 'UNKNOWN', ribbonStatus: c?.ribbonStatus ?? 'UNKNOWN', sourceName: c?.sourceName ?? '', sourceUrl: c?.sourceUrl ?? '', credits: c?.credits ?? [] })
-const metadata = (f: CoverForm) => ({ ...f, label: f.label.trim(), sourceName: f.sourceName.trim(), sourceUrl: f.sourceUrl.trim(), printingFrom: f.printingFrom ? Number(f.printingFrom) : null, usedFrom: f.usedFrom || null, credits: f.credits.map(c => ({ designerId: c.designerId, role: c.role })) })
+type CoverForm = { label: string; printingFrom: string; usedFrom: string; variantType: Cover['variantType']; ribbonStatus: Cover['ribbonStatus']; sourceName: string; sourceUrl: string; copyrightHolder: string; credits: Cover['credits'] }
+const formOf = (c?: Cover): CoverForm => ({ label: c?.label ?? '', printingFrom: String(c?.printingFrom ?? ''), usedFrom: c?.usedFrom ?? '', variantType: c?.variantType ?? 'UNKNOWN', ribbonStatus: c?.ribbonStatus ?? 'UNKNOWN', sourceName: c?.sourceName ?? '', sourceUrl: c?.sourceUrl ?? '', copyrightHolder: c?.copyrightHolder ?? '', credits: c?.credits ?? [] })
+const metadata = (f: CoverForm) => ({ ...f, label: f.label.trim(), sourceName: f.sourceName.trim(), sourceUrl: f.sourceUrl.trim(), copyrightHolder: f.copyrightHolder.trim(), printingFrom: f.printingFrom ? Number(f.printingFrom) : null, usedFrom: f.usedFrom || null, credits: f.credits.map(c => ({ designerId: c.designerId, role: c.role })) })
 function MetadataFields({ form, setForm }: { form: CoverForm; setForm: (f: CoverForm) => void }) {
   return <div className="catalog-edit-grid">
     <label>표지 종류<select aria-label="표지 종류" value={form.variantType} onChange={e => setForm({ ...form, variantType: e.target.value as Cover['variantType'] })}>{Object.entries(VARIANT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
@@ -162,6 +162,9 @@ function MetadataFields({ form, setForm }: { form: CoverForm; setForm: (f: Cover
     <label>사용 시작일<input type="date" value={form.usedFrom} onChange={e => setForm({ ...form, usedFrom: e.target.value })} /></label>
     <label>출처 이름<input maxLength={100} value={form.sourceName} onChange={e => setForm({ ...form, sourceName: e.target.value })} /></label>
     <label className="catalog-wide">출처 URL<input type="url" pattern="https?://.*" maxLength={1000} value={form.sourceUrl} onChange={e => setForm({ ...form, sourceUrl: e.target.value })} /></label>
+    <label className="catalog-wide">표지 저작권자<input aria-label="표지 저작권자" maxLength={500} value={form.copyrightHolder} onChange={e => setForm({ ...form, copyrightHolder: e.target.value })} placeholder="예: 홍길동 / ○○출판사" />
+      <span className="muted small">확인된 개인·단체명을 기록하세요. 제작 크레딧·이미지 제공처와 별도이며, 공동 저작권자도 함께 적을 수 있습니다.</span>
+    </label>
     <div className="catalog-wide credit-editor"><strong className="small">표지 크레딧</strong>
       {form.credits.map((credit, index) => <div className="row" key={`${credit.designerId}-${index}`}>
         <span>{credit.name}</span><label>역할<select value={credit.role} onChange={e => setForm({ ...form, credits: form.credits.map((c, i) => i === index ? { ...c, role: e.target.value } : c) })}>{Object.entries(CREDIT_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
@@ -202,7 +205,7 @@ function CoverEditor({ book, cover, choices, disabled, onSaved, markDirty }: { b
         {!representative && <button disabled={disabled || cover.hidden || Boolean(busy) || dirty} onClick={() => void work('대표 표지 변경 중…', async () => { await api(`/books/${book.id}/covers/${cover.id}/representative`, { method: 'PUT' }); await onSaved() })}>대표 표지로 지정</button>}
       </div>
     </div>
-    <dl className="small"><dt>같은 판</dt><dd>현재 도서에 속함 · {book.edition || '판 미입력'}</dd><dt>동일 이미지 주소</dt><dd>{identical.length ? identical.map(e => e.title).join(', ') : '현재 도서·연결 도서의 대표 표지에서 일치 없음'}</dd><dt>디자인 묶음</dt><dd>{cover.similarGroupId ? <code>{cover.similarGroupId}</code> : '지정되지 않음'}</dd></dl>
+    <dl className="small"><dt>표지 저작권자</dt><dd>{cover.copyrightHolder || '미입력'}</dd><dt>같은 판</dt><dd>현재 도서에 속함 · {book.edition || '판 미입력'}</dd><dt>동일 이미지 주소</dt><dd>{identical.length ? identical.map(e => e.title).join(', ') : '현재 도서·연결 도서의 대표 표지에서 일치 없음'}</dd><dt>디자인 묶음</dt><dd>{cover.similarGroupId ? <code>{cover.similarGroupId}</code> : '지정되지 않음'}</dd></dl>
     <p className="muted small">동일 이미지 주소는 같은 저장 URL 기준입니다. 다른 주소의 파일 내용까지 비교하지 않습니다.</p>
     <form onSubmit={e => { e.preventDefault(); void work('표지 정보 저장 중…', async () => {
       const saved = await api<Cover>(`/admin/catalog/${book.id}/covers/${cover.id}`, { method: 'PUT', body: metadata(form) })
