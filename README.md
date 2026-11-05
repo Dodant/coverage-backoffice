@@ -2,11 +2,13 @@
 
 COVERAGE 백오피스 (Vite + React + TS). 개발 중에는 로그인 화면 없이 접속한다. 백엔드의 관리자 전용 변경 API는 계속 ADMIN 인증을 요구한다.
 
+문서: [아키텍처](docs/ARCHITECTURE.md) · [API 계약](docs/API.md) · [개발 가이드](docs/DEVELOPMENT.md) · AI 코딩 에이전트 지침은 [CLAUDE.md](CLAUDE.md)와 `.claude/rules/`.
+
 1. 백엔드를 띄운다: `cd ../coverage-backend && docker compose up -d && ./gradlew bootRun`
 2. 에이전트 등록 기록을 보려면: `cd ../coverage-backend && python3 .claude/skills/register-book/api.py serve`
 3. 커버 탐색을 쓰려면 별도 터미널에서 `npm run cover-agent`를 실행한다. 제목·저자·ISBN으로 Open Library와 Google Books에서 책을 먼저 찾고, 책을 선택한 뒤 커버 후보를 탐색한다. 한 출처가 실패해도 다른 출처의 검색 결과는 표시한다. 표지 적용 시에는 관리자 토큰을 백엔드 `/api/users/me`로 확인한다. Google Books 키가 있으면 `GOOGLE_BOOKS_API_KEY` 환경변수로 넣는다. 국내 도서 검색에는 카카오 REST API 키를 `KAKAO_REST_API_KEY`로 넣는다(없으면 카카오 검색은 건너뛴다. 카카오 썸네일은 검색 목록 표시용이며 표지 적용 출처는 아니다). 기본 포트는 8766이고 `COVERAGE_COVER_AGENT_PORT`로 변경할 수 있다.
 4. `npm install && npm run dev` → http://localhost:5173 (개발 서버가 `/api`는 백엔드 8080, `/agent`는 실행 기록 8765, `/cover-agent`는 커버 탐색 8766으로 프록시. 바꾸려면 `COVERAGE_BACKEND`, `COVERAGE_AGENT_RUNS`, `COVERAGE_COVER_AGENT`)
-5. 화면: 대시보드·감사 로그, 표지 묶기(언어가 달라도 비슷한 표지, 백엔드 `similar_group_id`), 커버 탐색·적용(책 검색·선택 → 원서 메인·언어별 번역서·판/쇄 후보·띠지 확인·표지 변형 등록), 등록 기록(에이전트 runs/), 엔티티 정리(병합·별칭·재색인). 표지 묶기 검색은 검색 인덱스 오류 시 DB의 유사 도서 검색으로 재시도하며, 등록된 원서만 묶을 수 있다. 커버 탐색은 등록 도서 검색이 실패해도 온라인 도서 검색 결과를 보여준다. 띠지 여부는 관리자가 이미지를 보고 표시한다. 적용 시 공개 출처의 JPEG/PNG를 받아 백엔드 이미지 검증·업로드를 거친 뒤 변형으로 추가하고 대표로 지정한다.
+5. 화면: 대시보드·감사 로그, 창비 자료실·퍼블리시, 온라인 커버 탐색·적용, 표지 묶기, 전체 도서·보완 필요 도서, 도서 통합 상세·관계 수정, 동일·유사 이미지 분석, 등록 기록, 엔티티 정리를 제공한다. 표지 묶기는 백엔드 `similar_group_id`로 언어가 다른 표지를 연결하며, 검색 인덱스 오류 시 DB의 유사 도서 검색으로 재시도하고 등록된 원서만 묶을 수 있다. 커버 탐색은 등록 도서 검색이 실패해도 온라인 도서 검색 결과를 보여준다. 띠지 여부는 관리자가 이미지를 보고 표시한다. 적용 시 허용된 공개 출처의 JPEG/PNG를 받아 백엔드 이미지 검증·업로드를 거친 뒤 표지 변형으로 추가하고 대표로 지정한다. 창비 자료실에서 책을 선택해 표지를 적용하거나 원서를 초안으로 등록해 퍼블리시할 수 있다.
 6. 확인: `npm run build && npm run lint && npm run test:cover-agent`. 배포 시에는 같은 출처에서 `/api`와 `/cover-agent`를 각 서비스로 넘겨야 한다(백엔드에 CORS 설정 없음). 탐색 서비스는 로컬호스트에 바인딩한다.
 
 도서 관리 화면:
@@ -14,7 +16,7 @@ COVERAGE 백오피스 (Vite + React + TS). 개발 중에는 로그인 화면 없
 - `/books/attention`: 대표 표지 없음·숨김, 해상도 부족/미확인, ISBN·출처 URL·크레딧·연도·출판사 누락, 표지 변형 미분류를 DB에서 필터링한 뒤 페이지 처리한다. 보완 항목은 공개 차단 조건이 아니다.
 - `/books/:id`: 서지정보·저자·출판사 수정, 연결 원서·번역서·작품의 다른 판과 변경 이력 조회. 표지 버전 탭에서 업로드, 대표 지정, 표지 종류·띠지·시작 쇄·사용 시작일·출처·역할별 크레딧과 디자인 묶음을 관리한다.
 
-구분 기준은 도서(판/ISBN) → 소속 표지 변형, 표지의 `similarGroupId` → 관리자가 확인한 유사 디자인 묶음, 동일 `imageUrl` → 같은 이미지 주소다. 파일 내용/픽셀의 동일성을 판정하는 기능은 아니며 이미지 주소 비교는 현재 도서의 변형과 연결 도서의 대표 표지 범위다. 표지 묶기 보드에도 대표뿐 아니라 소속 표지 변형을 표시한다.
+도서 상세의 동일 이미지 주소 표시는 도서(판/ISBN) → 소속 표지 변형, 표지의 `similarGroupId` → 관리자가 확인한 유사 디자인 묶음을 기준으로 하며, 같은 `imageUrl`을 쓰는 표지를 찾는다. 이 상세 화면의 주소 비교 범위는 현재 도서의 변형과 연결 도서의 대표 표지다. 별도 **동일·유사 이미지** 화면은 저장 파일의 SHA-256으로 동일 파일을 찾고, 지각 해시와 종횡비로 유사 이미지를 검토 후보로 제시한다. 유사 후보를 동일 이미지로 확정하지 않는다. 표지 묶기 보드에도 대표뿐 아니라 소속 표지 변형을 표시한다.
 
 새 화면은 관리자 인증과 최신 백엔드의 `/api/admin/catalog` API가 필요하다. 백엔드를 재시작해야 하며, 운영 환경은 먼저 `coverage-backend/scripts/migrations/2026-10-27_cover_variant_metadata.sql`을 적용한다. 기존 표지의 변형 종류·띠지 상태는 미확인으로 유지한다. 개발 환경(`ddl-auto=update`)은 기동 시 컬럼을 추가한다.
 
@@ -24,7 +26,7 @@ COVERAGE 백오피스 (Vite + React + TS). 개발 중에는 로그인 화면 없
 - 기존 분석은 관리 중인 S3 저장소만 읽는다. 다른 주소·없는 파일·빈 파일·손상 파일은 실패 사유와 도서 링크로 표시한다. 분석 실패가 다른 파일의 처리를 중단하지 않는다. 유사 후보는 동일성의 확정 결과가 아니며 자동 병합·삭제하지 않는다.
 - 운영 배포 전 `coverage-backend/scripts/migrations/2026-10-27_image_fingerprints.sql`을 적용한다. 기존 `sha256`(차단용 픽셀 해시)은 유지하며 새 `file_sha256`은 실제 저장 바이트의 해시다.
 
-실데이터 확인 결과는 `docs/backoffice-verification-2026-10-27.md`에 기록했다.
+2026-10-27 당시의 실데이터 검증 결과는 `docs/backoffice-verification-2026-10-27.md`, 2026-10-28 당시의 PR 수정 검증 결과는 `docs/pr-review-fixes-2026-10-28.md`에 기록했다. 이 문서들은 해당 날짜에 실행한 검증의 기록이다.
 
 브라우저 회귀 테스트:
 - 최초 설정: `npx playwright install chromium`, 실행: `npm run test:browser`.

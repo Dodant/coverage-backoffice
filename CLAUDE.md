@@ -2,19 +2,31 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-COVERAGE 백오피스: Vite + React 19 + TypeScript SPA, plus one small Node service (`server/cover-agent.mjs`). UI text, comments, and error messages are written in Korean — keep it that way.
+COVERAGE 백오피스: Vite + React 19 + TypeScript SPA, plus one small dependency-free Node service (`server/cover-agent.mjs`). UI text, comments, and error messages are written in Korean — keep it that way.
+
+## 문서 지도 — 작업 전에 읽을 것
+
+| 작업 | 먼저 읽을 문서 |
+|---|---|
+| 구조 파악, 화면·라우트 찾기, 데이터 흐름, 도메인 용어(원서/번역서/표지 변형/디자인 묶음) | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| cover-agent 엔드포인트 추가·수정, 백엔드 API 호출 추가 | [docs/API.md](docs/API.md) |
+| 로컬 실행, 환경변수, 테스트 작성, 코딩 규칙, 자주 하는 실수, 배포 제약 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) |
+| `server/**` 수정 | `.claude/rules/cover-agent.md` |
+| `src/**`, `tests/browser/**` 수정 | `.claude/rules/frontend.md` |
+
+파일명이 날짜로 끝나는 `docs/*-YYYY-MM-DD.md`(예: `docs/backoffice-verification-2026-10-27.md`)는 특정 날짜의 검증 기록이다. 현재 동작의 명세로 쓰지 않는다. 백엔드 API의 원본은 형제 저장소 `../coverage-backend`다.
 
 ## Commands
 
 - `npm run dev` — Vite dev server on http://localhost:5173
-- `npm run cover-agent` — cover discovery service on 127.0.0.1:8766 (`COVERAGE_COVER_AGENT_PORT`, optional `GOOGLE_BOOKS_API_KEY`, `KAKAO_REST_API_KEY`)
-- `npm run build` — `tsc -b && vite build` (this is the type check)
-- `npm run lint` — ESLint
+- `npm run cover-agent` — cover discovery service on 127.0.0.1:8766 (`COVERAGE_COVER_AGENT_PORT`, optional `GOOGLE_BOOKS_API_KEY`, `KAKAO_REST_API_KEY`, `COVERAGE_CHANGBI_DIR`)
+- `npm run build` — `tsc -b && vite build` (the only type check; covers `src/` and `vite.config.ts`)
+- `npm run lint` — ESLint (`*.ts`/`*.tsx` only — `server/*.mjs` is not linted)
 - `npm run test:cover-agent` — `node --test server/cover-agent.test.mjs`
-- `npm run test:browser` — Playwright 표지 편집 회귀 테스트. 최초 `npx playwright install chromium` 필요. 로컬 Chrome은 `PLAYWRIGHT_CHANNEL=chrome npm run test:browser`. 전용 포트 4175와 모킹 API를 사용한다.
 - Single test: `node --test --test-name-pattern "<name substring>" server/cover-agent.test.mjs`
+- `npm run test:browser` — Playwright 표지 편집 회귀 테스트. 최초 `npx playwright install chromium` 필요. 로컬 Chrome은 `PLAYWRIGHT_CHANNEL=chrome npm run test:browser`. 전용 포트 4175와 모킹 API를 사용한다.
 
-Verification before finishing: `npm run build && npm run lint && npm run test:cover-agent`. 표지 편집 변경 시 `npm run test:browser`도 실행한다.
+Verification before finishing: `npm run build && npm run lint && npm run test:cover-agent`. 표지 편집(`src/pages/BookDetail.tsx`) 변경 시 `npm run test:browser`도 실행한다.
 
 ## Runtime topology
 
@@ -24,32 +36,19 @@ The SPA talks to three backends, all same-origin via the Vite proxy (`vite.confi
 |---|---|---|
 | `/api` | `localhost:8080` (`COVERAGE_BACKEND`) | Spring backend in sibling repo `../coverage-backend` (`docker compose up -d && ./gradlew bootRun`) |
 | `/agent` → stripped | `localhost:8765` (`COVERAGE_AGENT_RUNS`) | Agent run records, served by `python3 .claude/skills/register-book/api.py serve` in `../coverage-backend` |
-| `/cover-agent` → stripped | `localhost:8766` (`COVERAGE_COVER_AGENT`) | `server/cover-agent.mjs` in this repo |
+| `/cover-agent` → stripped | `localhost:8766` (`COVERAGE_COVER_AGENT`) | `server/cover-agent.mjs` in this repo; reads `../changbi-press` |
 
-## Architecture
+## 핵심 규칙
 
-- `src/api.ts` — `api<T>(path)` wraps `fetch('/api' + path)`, attaches `Authorization: Bearer` from the `coverage-backoffice-session` sessionStorage entry if present, throws `ApiError`. Use `safeUrl()` for any externally sourced URL put into `href`/`src`.
-- Login UI was removed for development preview (`/login` redirects to `/cover-discovery`), but backend admin mutations (`/admin/...`) and cover-agent `/apply` still require an ADMIN bearer token.
-- `src/App.tsx` — sidebar (`MENU`: sections 수집 → 검토·공개 → 관리, one `{to, label, badge?, drop?}` per item), routes, the 퍼블리시 drop target and the toast; one file per screen in `src/pages/`.
-- `src/changbi.ts` — `ChangbiBook` type, `usable`/`translated`/`thumbUrl`, and the session cache of cover-agent `/changbi/books` (1.9MB) shared by `Changbi.tsx` and the global search; pages call `patchChangbiBook` after a pick/register so the cache stays current. `src/useWork.ts` — busy/error/message state for a button-driven task.
-- `src/GlobalSearch.tsx` — sidebar search palette (`/` key). Queries backend `/search`, `/admin/books?status=DRAFT` and cover-agent `/changbi/books` (cached per session) in parallel; a hit navigates to the screen with that item selected: `/books/:id` (원서·번역서 통합 상세), `/publish?id=`, `/publishers/changbi?key=`. Pages read those params once and then clear them. Shared bits: `ui.tsx` (`Page<T>` Spring pagination type, `Pager`), `lang.ts` (language code → Korean name).
-- `src/catalog.ts` — 도서·표지 타입, 보완/변형/띠지/크레딧 라벨, `loadEditions`(관리자 세션은 비공개 포함 조회, 없으면 공개 API). `Books.tsx`의 전체/보완 목록은 `/admin/catalog`에서 모든 필터를 적용한 뒤 페이지 처리하며 URL에 조건을 유지한다. `BookDetail.tsx`는 서지 편집·연결 도서·감사 이력과 표지 버전(업로드/대표 지정/쇄·기간·분류·띠지·출처·크레딧·디자인 묶음)을 관리한다. 새 API는 최신 백엔드와 관리자 인증이 필요하다.
-- `BookRelationships.tsx` — 연결 도서 탭의 관계 미리보기·충돌 검사 후 적용. `ImageDuplicates.tsx` — `/image-duplicates`에서 EXACT_FILE/SAME_URL/SIMILAR 비교, 구형 표지 해시 계산(10개씩 커서 이동·중단 가능), 실패 도서 링크. 실제 저장 바이트 해시와 유사 후보를 구분한다.
-- Pages call `api()` for backend data, but call `fetch('/cover-agent/...')` and `fetch('/agent/...')` directly.
+요약이다. 규칙의 원본과 예외는 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#코딩-규칙)에 있으며, 바꿀 때는 그쪽을 고친다.
 
-### Cover agent (`server/cover-agent.mjs`)
-
-Plain `node:http`, no dependencies, bound to 127.0.0.1. `localRequest` rejects non-localhost `Host` (DNS rebinding) and non-JSON POSTs (cross-site requests without preflight), so callers must send `Content-Type: application/json`. Endpoints:
-- `/books/search` — searches Kakao (only when `KAKAO_REST_API_KEY` is set; listed first for Korean books), Open Library and Google Books; a failing source is reported in `errors` while the others' results still return. Kakao thumbnails (`search1.kakaocdn.net`) are display-only — not in the `coverUrl` allowlist, so they can't be applied as covers.
-- `/discover` — finds cover candidates for a selected book; `?stream=1` streams NDJSON `progress` events then a `result` (or `error`) event.
-- `/apply` — verifies the token via backend `/api/users/me` (role must be `ADMIN`), downloads the image (only HTTPS from `covers.openlibrary.org` / `books.google.com` / `books.googleusercontent.com`, manual redirect re-validation, ≤10MB, JPEG/PNG magic-byte check), then uploads to the backend as a cover variant and sets it as primary.
-
-- `/changbi/*` — 창비 자료실 (`Changbi.tsx`). Reads the scraped press-kit data in `../changbi-press` (`COVERAGE_CHANGBI_DIR`; built by `tools/collect.py` there): `GET /changbi/books`, `GET /changbi/{covers,thumbs,candidates}/<file>` (path-checked by `changbiFile`), `POST /changbi/candidates` (unzip a press kit's images), `/changbi/pick` (choose the cover; saved to `overrides.json`, which `collect.py` also honors), `/changbi/apply` (ADMIN; uploads the local file via the same `attachCover` path as `/apply`, shrinking >10MB files). `/changbi/register` (ADMIN) creates a new original as `status: DRAFT` — dropped from 창비 자료실 onto the sidebar 퍼블리시 link; `Publish.tsx` lists drafts via backend `GET /admin/books?status=DRAFT`, edits with `PUT /books/original/:id`, and publishes with `POST /admin/moderation/content/restore`. Translated books are refused (they need an original to attach to). Image work shells out to `changbi-press/venv/bin/python tools/backoffice.py`.
-
-Exported functions take an injectable `fetcher` (and `callBackend` for `applyCover`) — tests stub these instead of hitting the network. Keep that seam when adding logic.
-
-### Domain notes
-
-- Books are originals (원서) with translated editions linked by original id (`/books/original/:id`, `/books/translated/by-original/:id`).
-- 표지 묶기 (`Covers.tsx`) groups visually similar covers across languages via backend `similar_group_id`; only registered originals can be grouped. Search falls back to DB similar-book search when the search index errors.
-- 커버 탐색 (`CoverDiscovery.tsx`) still shows online search results when registered-book search fails. Ribbon/띠지 status (`clean`/`banded`/`unknown`) is set manually by the admin.
+- **Auth**: Login UI was removed for development preview (`/login` → `/cover-discovery`). Backend admin mutations (`/admin/...`, `PUT /books/...`, `/covers`) and cover-agent `/apply`, `/changbi/apply`, `/changbi/register` still require an ADMIN bearer token, read from sessionStorage `coverage-backoffice-session` by `session()` in `src/api.ts`.
+- **Calls**: backend via `api<T>('/path')` (no `/api` prefix); cover-agent POSTs via `coverAgent<T>()` — the agent rejects non-JSON POSTs and non-localhost `Host` with 403. Direct `fetch` only for `/agent/*`, cover-agent GETs, the `/discover?stream=1` NDJSON stream, and the multipart upload `POST /api/covers` (`api()` JSON-encodes bodies, so never route `FormData` through it).
+- **URLs**: any externally sourced URL put into `href`/`src` goes through `safeUrl()` (or `imageOf()`).
+- **Book PUT is partial**: `PUT /books/{original,translated}/:id` treats missing/`null` as "keep" and `''` as a value — send only changed fields and refuse blanks. Cover metadata `PUT /admin/catalog/:id/covers/:coverId` is the opposite: send the whole form; an empty value clears the field (e.g. `copyrightHolder`).
+- **Cover sources**: only HTTPS from `covers.openlibrary.org` / `books.google.com` / `books.googleusercontent.com` can be applied. Kakao thumbnails are display-only. Don't widen the allowlist without updating validation and tests.
+- **Testability seam**: cover-agent exports take injectable `fetcher` / `callBackend` / `tool` / `dir`; tests stub these instead of hitting the network. Keep that seam when adding logic.
+- **Unsaved edits**: `BookDetail.tsx` cover cards are keyed by cover ID and only resync when not dirty. Don't key them by refresh revision.
+- **Image identity**: `EXACT_FILE` (file SHA-256), `SAME_URL`, `SIMILAR` (review candidate only) are distinct; never auto-merge similar candidates. 보완 항목(issues) are hints, not publish blockers.
+- **창비 등록**: translated books are refused by `/changbi/register` (they need an original). Keep `src/changbi.ts` / `Changbi.tsx` `canQueue` in sync with server rules.
+- Don't add dependencies by default; mark deliberate shortcuts with a `// ponytail:` comment naming the limit.
