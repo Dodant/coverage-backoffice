@@ -71,10 +71,35 @@ test('이전 갱신 응답이 늦게 와도 나중에 저장한 표지를 되돌
   await expect(second.getByRole('button', { name: '표지 정보 저장', exact: true })).toBeDisabled()
 })
 
+test('표지별 저작권자를 저장·재조회하고 비워도 출처·크레딧은 유지한다', async ({ page }) => {
+  const { cards, persisted } = await setup(page)
+  const first = cards('cover-a'), second = cards('cover-b')
+  await first.getByLabel('출처 이름', { exact: true }).fill('이미지 제공처')
+  await first.getByLabel('표지 저작권자', { exact: true }).fill('  홍길동 / 공동 권리자  ')
+  await second.getByLabel('표지 저작권자', { exact: true }).fill('다른 표지 권리자')
+  await first.getByRole('button', { name: '표지 정보 저장', exact: true }).click()
+  await expect(first.getByRole('button', { name: '표지 정보 저장', exact: true })).toBeDisabled()
+  await expect(first.getByLabel('표지 저작권자', { exact: true })).toHaveValue('홍길동 / 공동 권리자')
+  await expect(second.getByLabel('표지 저작권자', { exact: true })).toHaveValue('다른 표지 권리자')
+  expect(persisted()[0].copyrightHolder).toBe('홍길동 / 공동 권리자')
+  expect(persisted()[1].copyrightHolder).toBeNull()
+  // 다른 카드의 미저장 입력은 명시적으로 버리고 새 상세에서 서버 저장값을 확인한다.
+  page.once('dialog', dialog => dialog.accept())
+  await page.reload()
+  await page.getByRole('button', { name: /판·쇄·표지 버전/ }).click()
+  await expect(first.getByLabel('표지 저작권자', { exact: true })).toHaveValue('홍길동 / 공동 권리자')
+  await first.getByLabel('표지 저작권자', { exact: true }).fill('')
+  await first.getByRole('button', { name: '표지 정보 저장', exact: true }).click()
+  await expect(first.getByRole('button', { name: '표지 정보 저장', exact: true })).toBeDisabled()
+  expect(persisted()[0].copyrightHolder).toBeNull()
+  expect(persisted()[0].sourceName).toBe('이미지 제공처')
+  expect(persisted()[0].credits).toEqual([])
+})
+
 async function setup(page: import('@playwright/test').Page) {
   const cover = (id: string): Cover => ({ id, imageUrl: 'https://example.org/cover.png', thumbnailUrl: 'https://example.org/thumb.png',
     label: id, width: 800, height: 1200, hidden: false, printingFrom: null, usedFrom: null, variantType: 'UNKNOWN', ribbonStatus: 'UNKNOWN',
-    sourceName: '', sourceUrl: '', credits: [], similarGroupId: null })
+    sourceName: '', sourceUrl: '', copyrightHolder: null, credits: [], similarGroupId: null })
   let covers = [cover('cover-a'), cover('cover-b')]
   let representative = 'cover-a'
   let fail = false
@@ -112,7 +137,8 @@ async function setup(page: import('@playwright/test').Page) {
     if (request.method() === 'PUT' && path.startsWith('/api/admin/catalog/book-1/covers/')) {
       if (fail) { fail = false; return route.fulfill({ status: 500, json: { message: '검증용 저장 실패' } }) }
       const id = path.split('/').at(-1)
-      covers = covers.map(c => c.id === id ? { ...c, ...request.postDataJSON() } : c)
+      const body = request.postDataJSON()
+      covers = covers.map(c => c.id === id ? { ...c, ...body, copyrightHolder: body.copyrightHolder?.trim() || null } : c)
       return route.fulfill({ json: covers.find(c => c.id === id) })
     }
     return route.fulfill({ status: 404, json: { message: '예상하지 않은 검증 요청' } })

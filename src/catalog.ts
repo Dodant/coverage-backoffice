@@ -15,7 +15,7 @@ export type Cover = {
   id: string; imageUrl: string | null; thumbnailUrl: string | null; width: number | null; height: number | null
   label: string | null; printingFrom: number | null; usedFrom: string | null; hidden: boolean
   variantType: keyof typeof VARIANT_LABELS; ribbonStatus: keyof typeof RIBBON_LABELS
-  sourceName: string | null; sourceUrl: string | null; similarGroupId: string | null
+  sourceName: string | null; sourceUrl: string | null; copyrightHolder: string | null; similarGroupId: string | null
   credits: { designerId: string; name: string; role: string }[]
 }
 export type CatalogItem = {
