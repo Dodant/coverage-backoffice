@@ -40,7 +40,7 @@ flowchart LR
 | `server/cover-agent.mjs` | 표지 탐색·적용, 창비 자료실 서비스 |
 | `server/cover-agent.test.mjs` | `node:test` 단위 테스트(네트워크·백엔드 스텁) |
 | `tests/browser/` | Playwright 회귀 테스트(API 모킹) |
-| `docs/*-2026-10-2*.md` | 특정 날짜의 검증 기록. 현재 동작의 명세가 아니다 |
+| `docs/*-YYYY-MM-DD.md` | 특정 날짜의 검증 기록(파일명이 날짜로 끝남). 현재 동작의 명세가 아니다 |
 
 ## 화면과 라우트
 

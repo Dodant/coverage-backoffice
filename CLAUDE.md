@@ -14,7 +14,7 @@ COVERAGE 백오피스: Vite + React 19 + TypeScript SPA, plus one small dependen
 | `server/**` 수정 | `.claude/rules/cover-agent.md` |
 | `src/**`, `tests/browser/**` 수정 | `.claude/rules/frontend.md` |
 
-`docs/*-2026-10-2*.md`는 특정 날짜의 검증 기록이다. 현재 동작의 명세로 쓰지 않는다. 백엔드 API의 원본은 형제 저장소 `../coverage-backend`다.
+파일명이 날짜로 끝나는 `docs/*-YYYY-MM-DD.md`(예: `docs/backoffice-verification-2026-10-27.md`)는 특정 날짜의 검증 기록이다. 현재 동작의 명세로 쓰지 않는다. 백엔드 API의 원본은 형제 저장소 `../coverage-backend`다.
 
 ## Commands
 
@@ -40,10 +40,12 @@ The SPA talks to three backends, all same-origin via the Vite proxy (`vite.confi
 
 ## 핵심 규칙
 
+요약이다. 규칙의 원본과 예외는 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#코딩-규칙)에 있으며, 바꿀 때는 그쪽을 고친다.
+
 - **Auth**: Login UI was removed for development preview (`/login` → `/cover-discovery`). Backend admin mutations (`/admin/...`, `PUT /books/...`, `/covers`) and cover-agent `/apply`, `/changbi/apply`, `/changbi/register` still require an ADMIN bearer token, read from sessionStorage `coverage-backoffice-session` by `session()` in `src/api.ts`.
-- **Calls**: backend via `api<T>('/path')` (no `/api` prefix); cover-agent POSTs via `coverAgent<T>()` — the agent rejects non-JSON POSTs and non-localhost `Host` with 403. Only `/agent/*`, cover-agent GETs and the `/discover?stream=1` NDJSON stream use `fetch` directly.
+- **Calls**: backend via `api<T>('/path')` (no `/api` prefix); cover-agent POSTs via `coverAgent<T>()` — the agent rejects non-JSON POSTs and non-localhost `Host` with 403. Direct `fetch` only for `/agent/*`, cover-agent GETs, the `/discover?stream=1` NDJSON stream, and the multipart upload `POST /api/covers` (`api()` JSON-encodes bodies, so never route `FormData` through it).
 - **URLs**: any externally sourced URL put into `href`/`src` goes through `safeUrl()` (or `imageOf()`).
-- **Partial PUT**: backend PUT treats missing/`null` as "keep" and `''` as a value. Send only changed fields; refuse blanks in the UI.
+- **Book PUT is partial**: `PUT /books/{original,translated}/:id` treats missing/`null` as "keep" and `''` as a value — send only changed fields and refuse blanks. Cover metadata `PUT /admin/catalog/:id/covers/:coverId` is the opposite: send the whole form; an empty value clears the field (e.g. `copyrightHolder`).
 - **Cover sources**: only HTTPS from `covers.openlibrary.org` / `books.google.com` / `books.googleusercontent.com` can be applied. Kakao thumbnails are display-only. Don't widen the allowlist without updating validation and tests.
 - **Testability seam**: cover-agent exports take injectable `fetcher` / `callBackend` / `tool` / `dir`; tests stub these instead of hitting the network. Keep that seam when adding logic.
 - **Unsaved edits**: `BookDetail.tsx` cover cards are keyed by cover ID and only resync when not dirty. Don't key them by refresh revision.

@@ -12,7 +12,7 @@
 - POST는 `Content-Type: application/json`이어야 한다. 아니면 403. 사전 확인 없는 교차 출처 요청 방어. 프런트엔드는 `coverAgent()`(`src/api.ts`)가 헤더를 붙인다. `/discover?stream=1`만 `CoverDiscovery.tsx`가 `fetch`로 직접 호출한다.
 - 요청 본문은 4096바이트 이하의 JSON 객체여야 한다.
 - 오류 응답은 `{ message }`(한국어). 상태 코드는 `fail(status, message)`로 던진 값이며, 없으면 메시지에 `입력|ISBN|제목|JSON`이 들어가면 400, 그 외 502다. 새 오류는 `fail()`로 상태를 명시한다.
-- ADMIN 경로(`/apply`, `/changbi/apply`, `/changbi/register`): `Authorization: Bearer <token>` 없으면 401 → 백엔드 `GET /api/users/me`(5초 제한) 실패 시 401 → `role !== 'ADMIN'`이면 403. 그 토큰을 그대로 백엔드 호출에 쓴다.
+- ADMIN 경로(`/apply`, `/changbi/apply`, `/changbi/register`): `Authorization: Bearer <token>` 없으면 401 → 백엔드 `GET /api/users/me`(5초 제한)가 실패 상태를 응답하면 401 → `role !== 'ADMIN'`이면 403. 백엔드 연결 실패·시간 초과·JSON이 아닌 응답은 예외로 처리돼 **502**다(인증 실패와 구분된다). 그 토큰을 그대로 백엔드 호출에 쓴다.
 
 ### 엔드포인트
 
@@ -56,7 +56,7 @@
 | `/admin/catalog?query&kind&status&language&publisher&hasCover&sort&issue&needsAttention&page&size` | GET | ADMIN | `Books`, `BookRelationships` |
 | `/admin/catalog/:id` | GET | ADMIN | `BookDetail` (`Detail`) |
 | `/admin/catalog/:id/editions` | GET | ADMIN | `loadEditions`(토큰 있을 때, 비공개 포함) |
-| `/admin/catalog/:id/covers/:coverId` | PUT | ADMIN | 표지 메타데이터 저장. 저장된 `Cover`를 반환 |
+| `/admin/catalog/:id/covers/:coverId` | PUT | ADMIN | 표지 메타데이터 저장. 폼 전체를 보내고 빈 값으로 비운다(아래 주의). 저장된 `Cover`를 반환 |
 | `/admin/catalog/:id/relationship-preview` | POST | ADMIN | `{action, targetId}` → `Preview` |
 | `/admin/catalog/:id/relationship` | PUT | ADMIN | `{action, targetId, expectedOriginalId, expectedWorkId, expectedTargetWorkId}` |
 | `/admin/covers/:coverId/similar-group` | PUT | ADMIN | `{withCoverId}`, `null`이면 묶음에서 분리 |
@@ -74,7 +74,7 @@
 
 ### 백엔드 계약상 주의
 
-- **PUT 부분 수정**: 백엔드 PUT은 `null`/누락을 "그대로 둠"으로, `''`를 값으로 저장한다. 그래서 화면은 바뀐 칸만 보내고 비우기를 막는다(`Publish.tsx` `save`, `BookDetail.tsx` `BookEditor`). 칸을 비울 수 있게 하려면 백엔드 계약부터 바꿔야 한다.
+- **PUT 의미는 엔드포인트마다 다르다.** 프런트엔드가 지켜야 할 규칙은 [DEVELOPMENT.md](DEVELOPMENT.md#프런트엔드-src)에 있다. 요약: 도서 PUT(`/books/{original,translated}/:id`)은 부분 수정이라 `''`가 값으로 저장돼 칸을 비울 수 없다. 표지 메타데이터 PUT은 폼 전체를 보내며 빈 값이 비우기다.
 - **초안·숨김 도서**는 공개 조회(`/books/{kind}/:id`)에서 404다. 관리자 경로 `/admin/catalog/:id`로 다시 읽는다(`attachCover`).
 - `/admin/catalog` 계열·이미지 검사·표지 메타데이터는 최신 백엔드와 마이그레이션이 필요하다([DEVELOPMENT.md](DEVELOPMENT.md#백엔드-마이그레이션)).
 
